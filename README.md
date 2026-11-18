@@ -1,60 +1,87 @@
 # Standard-MSA
 
-Stand-alone, self-hosted MSA/compliance tool for MSPs. Publish your legal
-documents (MSA, HIPAA BAA, …) at `/legal` on your own site, send each customer
-a **unique** MSA link, and keep a complete, timestamped evidence trail — sent,
-opened, clicked, viewed, accepted — for every send.
+Stand-alone, self-hosted legal document platform for MSPs: publish and
+version your MSA, HIPAA BAA and other client-facing legal documents; put them
+on your website; send unique per-client copies by email; and keep
+court-ready records of who visited, opened, and accepted what, when.
 
-Extracted from the compliance module of [ShadowPSA](https://ob.standardcomputer.com)
-and packaged so any MSP can run it themselves.
+Built by [Standard Computer](https://standardcomputer.com). The document
+engine is ported from the legal/compliance module of our in-house PSA, where
+it runs in production.
 
 ## What it does
 
-- **Onboarding wizard** — capture MSP identity (name, legal name, address,
-  owner/CEO, website), preview the contract header, pick the governing-law
-  venue. Skippable, re-runnable any time.
-- **`/legal` on your website** — generates the embed code for your site,
-  verifies the embed is live, and emails you if it is unreachable. Every visit
-  is logged locally (timestamp, IP, region, user agent).
-- **Unique MSA sends** — send from as little as a customer email address; each
-  send gets its own unguessable URL with the recipient's details merged into
-  the contract. Lifecycle events (sent, delivered, opened, clicked, viewed,
-  accepted, declined, bounced) are recorded with timestamp, IP and user agent
-  and kept as acceptance evidence.
-- **Update notifications** — when a document is republished you are *offered*
-  the option to notify prior recipients (never automatic), with audience
-  selection and a diff of what changed.
-- **API surface** — PSA and AI tools can create MSA sends through the HTTP API.
-- **Pluggable email** — SMTP2GO, SendGrid or plain SMTP. Configured at
-  runtime; **keys live in your environment, never in this repo or the
-  database.**
+- **Document library** — markdown documents with merge variables, drafts,
+  published versions, effective dates, diffs between versions, PDF export.
+  Document types are data: MSA ships first, HIPAA BAA next, your custom
+  agreement needs no code change.
+- **Onboarding wizard** — enter MSP identity once (name, legal name, address,
+  owner/CEO, website, venue for governing law); preview the contract header;
+  re-run any time. Skippable.
+- **Your website's `/legal`** — a copy-paste embed snippet serves your
+  published documents on your own site, with a liveness monitor that emails
+  you if the embed stops working, and a visitor log (timestamp, IP, region)
+  for every view.
+- **Unique sends** — send a document to a client from as little as an email
+  address. Each send gets its own link, frozen at the version the client
+  actually read, with a full lifecycle trail: sent, opened, clicked,
+  accepted — kept as acceptance evidence.
+- **Update notices** — publish a new version, notify recipients, keep proof
+  of who was told.
+- **Email, your way** — SMTP2GO, SendGrid, or plain SMTP. Configured at
+  runtime; keys live in your environment, never in this repo or the database.
+- **API** — PSA and AI tools can create sends and read acceptance status via
+  a token-authenticated REST surface.
 
-## Running it
+## Quick start
 
-```bash
-cp .env.example .env   # fill in locally; see comments in the file
-npm ci
-npx prisma migrate deploy
-npm run build
-npm start
+```sh
+git clone https://github.com/Standard-Computer/Standard-MSA.git
+cd Standard-MSA
+docker compose up
 ```
 
-Data is kept in a local SQLite file (`DATABASE_URL`, default
-`file:./data/standard-msa.db`). Back that file up and you have backed up the
-tool, including your acceptance evidence.
+Open http://localhost:3000 — the onboarding wizard takes it from there. Data
+lives in a SQLite file on a Docker volume; back up by copying the file.
 
-## Development
+### Development
 
-```bash
-npm run dev        # dev server
-npm run lint       # eslint
-npm run typecheck  # tsc --noEmit
-npm test           # node --test
+```sh
+cp .env.example .env     # defaults are fine for dev
+npm install
+npx prisma migrate dev
+npm run dev
 ```
 
-Architecture and module boundaries: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-What was ported from ShadowPSA and how: [`docs/PORT-ASSESSMENT.md`](docs/PORT-ASSESSMENT.md).
+Gates (all run in CI): `npm run lint`, `npm run typecheck`, `npm test`,
+`npm run build`.
+
+## Project layout
+
+```
+prisma/           schema + migrations (SQLite default; add-only changes)
+src/app/          Next.js App Router — public /legal, signing pages, operator UI, API
+src/lib/          domain modules: identity, legal, email, sends, visits, api
+docs/             ARCHITECTURE.md (data model, module boundaries),
+                  PORT-ASSESSMENT.md (what was ported from where)
+tests/            node:test suites, one directory per module
+```
+
+Module boundaries and lane ownership: `docs/ARCHITECTURE.md`.
+
+## Status
+
+Scaffold stage. The build is green and the architecture is set; capability
+modules land as independent lanes (onboarding, /legal + embed, email
+delivery, sends & acceptance, public API).
 
 ## License
 
-No license file yet — all rights reserved while licensing is decided.
+Not yet licensed — all rights reserved for now while licensing is decided.
+The repo is public for transparency; a LICENSE file will follow.
+
+## Security
+
+No credentials belong in this repo, ever. `.env.example` carries placeholders
+only and CI runs a secret scan on every push. If you find a security issue,
+email security@standardcomputer.com rather than opening a public issue.
