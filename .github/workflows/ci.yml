@@ -1,0 +1,125 @@
+# Standard-MSA CI.
+#
+# Self-hosted runners only (ci.shadowpsa.com pool) — board standing decision
+# recorded on SHA-1853: never pay for GitHub-hosted Actions. The pool carries
+# the `ci` label; see ShadowPSA's .github/workflows/ci.yml for the inventory.
+#
+# This repo is PUBLIC and the runners are self-hosted, so fork PRs must never
+# run workflows without approval. The repo's Actions settings require approval
+# for all outside collaborators; keep it that way. `pull_request` here is for
+# branch PRs from maintainers and the approved queue.
+#
+# Action pins follow the ShadowPSA convention: full commit SHAs.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  lint:
+    name: Lint (ESLint, incl. security rules)
+    runs-on: [self-hosted, ci]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # No npm Actions cache on this pool, measured not assumed: the runners
+      # are long-lived so ~/.npm stays warm between jobs (STA-10867).
+      - name: Install dependencies
+        run: npm ci
+      - name: ESLint
+        run: npm run lint
+
+  typecheck:
+    name: Typecheck (tsc --noEmit)
+    runs-on: [self-hosted, ci]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      # `prisma generate` first: no postinstall hook, so @prisma/client types
+      # do not exist after a bare `npm ci` and tsc fails repo-wide. Needs no
+      # DATABASE_URL — generate only reads prisma/schema.prisma.
+      - name: Typecheck
+        run: npm run typecheck
+
+  test:
+    name: Unit tests (node:test)
+    runs-on: [self-hosted, ci]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      - name: Tests
+        run: npm test
+
+  build:
+    name: Build (prisma generate + next build)
+    runs-on: [self-hosted, ci]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: [self-hosted, ci]
+    timeout-minutes: 15
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pinned binary, checksum-verified — same rationale as psa-trials-
+      # provisioner: gitleaks-action wants a license key for org repos, and
+      # the binary runs identical rules.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+      # --redact=100: this is a public repo; a scanner that echoes what it
+      # found has turned one leak into two.
+      - name: Scan working tree
+        run: |
+          set -euo pipefail
+          ./gitleaks dir . \
+            --redact=100 \
+            --exit-code 2 \
+            --report-format json \
+            --report-path gitleaks-report.json

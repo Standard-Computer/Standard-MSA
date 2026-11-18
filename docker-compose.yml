@@ -1,0 +1,16 @@
+# One `docker compose up` gives a working Standard-MSA instance.
+# SQLite is the default datastore (local file, zero external services);
+# the ./data volume holds the database across restarts.
+services:
+  app:
+    build: .
+    environment:
+      DATABASE_URL: file:/app/data/standard-msa.db
+      APP_BASE_URL: http://localhost:3000
+    volumes:
+      - msa-data:/app/data
+    ports:
+      - "3000:3000"
+
+volumes:
+  msa-data:

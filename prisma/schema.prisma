@@ -1,0 +1,184 @@
+// Standard-MSA data model (v0 scaffold).
+//
+// SQLite by default: the tool keeps a LOCAL database (Sean's requirement) and
+// must self-host with zero external services. Postgres can be offered later
+// behind the same Prisma schema if an MSP wants it; keep fields portable
+// (no sqlite-only tricks).
+//
+// Children extend this via `prisma migrate` in their own lanes:
+//   SHA-2956 onboarding   -> MspIdentity
+//   SHA-2957 /legal embed -> LegalDocument/Version, LegalVisit, SiteCheck
+//   SHA-2958 email        -> EmailProviderConfig (names of env vars, never values)
+//   SHA-2959 sends        -> Recipient, Send, SendEvent, AcceptanceRecord, UpdateNotice
+//   SHA-2960 API          -> ApiKey
+// Schema changes are add-only (company standing bar).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ── MSP identity / brand (onboarding, SHA-2956) ─────────────────────────────
+
+model MspIdentity {
+  id         Int      @id @default(autoincrement())
+  name       String // trading name, e.g. "Standard Computer"
+  legalName  String? // legal entity name used in the contract header
+  address    String?
+  ownerName  String? // owner / CEO, used as signatory
+  email      String? // MSP notification address (liveness alerts etc.)
+  website    String?
+  venue      String? // governing law / venue line
+  logoUrl    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ── Legal documents and versions (SHA-2957) ─────────────────────────────────
+
+model LegalDocument {
+  id        Int                    @id @default(autoincrement())
+  slug      String                 @unique // e.g. "msa", "hipaa-baa"
+  title     String
+  kind      String                 @default("msa")
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  versions  LegalDocumentVersion[]
+}
+
+model LegalDocumentVersion {
+  id            Int           @id @default(autoincrement())
+  documentId    Int
+  document      LegalDocument @relation(fields: [documentId], references: [id])
+  version       Int
+  bodyMarkdown  String // contract body with {{variable}} placeholders
+  variablesJson String        @default("{}") // defaults for merge variables
+  changelog     String?
+  publishedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  sends         Send[]
+
+  @@unique([documentId, version])
+}
+
+// Every visit to the public /legal pages (timestamp, IP, region — Sean's ask).
+model LegalVisit {
+  id         Int      @id @default(autoincrement())
+  path       String
+  slug       String?
+  version    Int?
+  occurredAt DateTime @default(now())
+  ip         String?
+  userAgent  String?
+  referer    String?
+  region     String? // derived from IP when resolvable; never a paid lookup
+}
+
+// Liveness checks of the MSP-site embed (is /legal live on their site?).
+model SiteCheck {
+  id         Int      @id @default(autoincrement())
+  targetUrl  String
+  ok         Boolean
+  statusCode Int?
+  detail     String?
+  checkedAt  DateTime @default(now())
+  alerted    Boolean  @default(false)
+}
+
+// ── Recipients and sends (SHA-2959) ─────────────────────────────────────────
+
+model Recipient {
+  id          Int      @id @default(autoincrement())
+  email       String
+  fullName    String?
+  companyName String?
+  legalName   String?
+  address     String?
+  phone       String?
+  createdAt   DateTime @default(now())
+  sends       Send[]
+}
+
+// One outbound MSA to one recipient: its own unique token/URL, recipient
+// details merged into the document, whole lifecycle tracked in SendEvent.
+model Send {
+  id                Int                  @id @default(autoincrement())
+  token             String               @unique // unguessable URL token
+  documentVersionId Int
+  documentVersion   LegalDocumentVersion @relation(fields: [documentVersionId], references: [id])
+  recipientId       Int
+  recipient         Recipient            @relation(fields: [recipientId], references: [id])
+  mergedVarsJson    String               @default("{}") // variables as merged at send time
+  status            String               @default("created") // created|sent|delivered|opened|accepted|declined|bounced
+  createdAt         DateTime             @default(now())
+  sentAt            DateTime?
+  acceptedAt        DateTime?
+  events            SendEvent[]
+  acceptance        AcceptanceRecord?
+}
+
+// Append-only lifecycle log, kept as acceptance evidence.
+model SendEvent {
+  id         Int      @id @default(autoincrement())
+  sendId     Int
+  send       Send     @relation(fields: [sendId], references: [id])
+  type       String // created|sent|delivered|opened|clicked|viewed|accepted|declined|bounced
+  occurredAt DateTime @default(now())
+  ip         String?
+  userAgent  String?
+  metaJson   String   @default("{}") // clicked URL, read-time ms, provider signal id…
+
+  @@index([sendId, occurredAt])
+}
+
+model AcceptanceRecord {
+  id            Int      @id @default(autoincrement())
+  sendId        Int      @unique
+  send          Send     @relation(fields: [sendId], references: [id])
+  acceptedAt    DateTime
+  acceptorName  String?
+  ip            String?
+  userAgent     String?
+  signatureJson String   @default("{}") // typed/drawn signature payload
+  evidenceJson  String   @default("{}") // frozen event-trail snapshot at acceptance
+}
+
+// ── Update notifications (SHA-2959) ─────────────────────────────────────────
+
+model UpdateNotice {
+  id                   Int      @id @default(autoincrement())
+  documentVersionId    Int // the NEW version recipients are notified about
+  audience             String // all|accepted|selected
+  recipientIdsJson     String   @default("[]")
+  createdAt            DateTime @default(now())
+  sentAt               DateTime?
+}
+
+// ── Email provider config (SHA-2958) ────────────────────────────────────────
+// Stores provider choice and non-secret settings ONLY. Secret values live in
+// the environment; this row records which env var NAME to read, never a value.
+
+model EmailProviderConfig {
+  id            Int      @id @default(autoincrement())
+  provider      String // smtp2go|sendgrid|smtp
+  fromAddress   String
+  settingsJson  String   @default("{}") // host/port/username, env var names for secrets
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ── API surface (SHA-2960) ──────────────────────────────────────────────────
+
+model ApiKey {
+  id         Int       @id @default(autoincrement())
+  name       String
+  keyHash    String    @unique // sha256 of the key; plaintext shown once at creation
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+}

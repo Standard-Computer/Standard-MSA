@@ -1,0 +1,18 @@
+# deps / build
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# local env and data — secrets and the local DB never enter the repo
+.env
+.env.local
+.env.*.local
+data/
+*.db
+*.db-journal
+
+# misc
+.DS_Store
+npm-debug.log*
