@@ -1,0 +1,58 @@
+# Woodpecker: lint + typecheck + test + build — SHA-2955.
+#
+# Mirrors the lint/typecheck/test/build jobs in .github/workflows/ci.yml.
+# One workflow, serial steps, rather than ShadowPSA's four files: this repo
+# builds in ~2.5 minutes end to end, so one `npm ci` shared across four
+# steps is cheaper for the farm than four workflow slots each paying its own
+# install. Split it like ShadowPSA's only if a step grows past ~10 minutes.
+#
+# Image pin is the SAME node digest ShadowPSA's .woodpecker/ pins (node 22),
+# so the farm's agents already have it cached and the two repos cannot drift
+# onto different node builds without a diff saying so.
+#
+# `npm run typecheck` and `npm run build` both run `prisma generate` first
+# via package.json — no postinstall hook, so without it @prisma/client types
+# do not exist after a bare `npm ci`. No DATABASE_URL needed; generate only
+# reads prisma/schema.prisma.
+#
+# STATUS IS INFORMATIONAL. GitHub Actions on the self-hosted pool remains
+# the graded CI; no ci/woodpecker/* context is required by branch
+# protection, and per the hazard documented in ShadowPSA's
+# .woodpecker/lint.yml, none should be made required until every open PR's
+# head carries this directory (a required context a PR cannot report sits at
+# "Expected" forever). Cutover is Sean's call.
+#
+# `push` is scoped to main to mirror ci.yml's own `on:`; `manual` is the
+# restart path for a branch whose last push predates the repo being enabled
+# (the webhook only fires on new events).
+when:
+  - event: pull_request
+  - event: push
+    branch: main
+  - event: manual
+
+steps:
+  - name: install
+    image: node@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
+    commands:
+      - npm ci
+
+  - name: lint
+    image: node@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
+    commands:
+      - npm run lint
+
+  - name: typecheck
+    image: node@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
+    commands:
+      - npm run typecheck
+
+  - name: test
+    image: node@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
+    commands:
+      - npm test
+
+  - name: build
+    image: node@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
+    commands:
+      - npm run build
