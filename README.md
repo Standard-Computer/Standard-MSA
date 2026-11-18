@@ -13,7 +13,7 @@ it runs in production.
 
 - **Document library** — markdown documents with merge variables, drafts,
   published versions, effective dates, diffs between versions, PDF export.
-  Document types are data: MSA ships first, HIPAA BAA next, your custom
+  Document types are data: v1 ships the MSA and the HIPAA BAA; your custom
   agreement needs no code change.
 - **Onboarding wizard** — enter MSP identity once (name, legal name, address,
   owner/CEO, website, venue for governing law); preview the contract header;
@@ -77,8 +77,13 @@ delivery, sends & acceptance, public API).
 
 ## License
 
-Not yet licensed — all rights reserved for now while licensing is decided.
-The repo is public for transparency; a LICENSE file will follow.
+[Business Source License 1.1](LICENSE) (source-available). You may self-host
+and run Standard-MSA for your own business free of charge — including as an
+MSP publishing, sending and tracking legal documents for your own clients.
+What the licence does not permit is offering Standard-MSA itself as a
+competing hosted or embedded product. On the Change Date (2030-11-18) the
+licence converts to Apache License 2.0. For other arrangements, contact
+sean@standardcomputer.com.
 
 ## Security
 

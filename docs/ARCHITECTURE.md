@@ -5,10 +5,28 @@ Router) + TypeScript + Prisma, SQLite by default. Ported from ShadowPSA's
 legal/compliance modules — see `docs/PORT-ASSESSMENT.md` for what comes from
 where and why.
 
+## v1 scope (board ruling, 2026-11-18)
+
+**v1 ships the MSA and the HIPAA BAA together**, matching what the upstream
+module already does in production. This is a scope statement, not a design
+change: the engine is type-agnostic (principle 1), so the BAA is a second
+`LegalDocument` row, not a second code path. Concretely:
+
+- Both document types are seeded/importable in v1; the document import and
+  public `/legal` surface (SHA-2957) list and serve **all** published
+  documents, never a hard-coded MSA.
+- Sends, acceptance evidence and update notices (SHA-2959) operate on *a
+  document version*, whichever document it belongs to — one engine, both
+  types, and any custom type an MSP adds.
+- The public API (SHA-2960) takes a document slug/ID on send creation;
+  nothing in the contract is MSA-specific.
+- Anything genuinely BAA-specific (e.g. BAA-only merge variables) must land
+  as data — rows and variable definitions — not as `kind === "baa"` branches.
+
 ## Principles
 
-1. **Type-agnostic documents.** MSA is document type #1, HIPAA BAA is #2; a
-   third type must need zero code changes. Document types are rows
+1. **Type-agnostic documents.** MSA and HIPAA BAA both ship in v1 (see scope
+   above); a third type must need zero code changes. Document types are rows
    (`LegalDocument`), never enums or `slug === "msa"` branches.
 2. **Single tenant.** One install serves one MSP. Settings are singletons;
    there is no org/tenant column anywhere.
