@@ -69,6 +69,74 @@ tests/            node:test suites, one directory per module
 
 Module boundaries and lane ownership: `docs/ARCHITECTURE.md`.
 
+## The /legal embed
+
+Settings → **Legal embed** (`/embed`) generates the code to paste on your
+website's `/legal` page. Two variants, one renderer:
+
+```html
+<div id="sm-legal"></div>
+<script src="https://YOUR-INSTALL/legal/embed.js" async></script>
+```
+
+or, for site builders that strip scripts, the same frame as a plain iframe:
+
+```html
+<iframe src="https://YOUR-INSTALL/legal/embed/frame" title="Legal agreements"
+        style="width:100%;border:0;height:1200px" loading="lazy"></iframe>
+```
+
+The script variant auto-sizes, inherits your site's fonts, and keeps deep
+links (`#msa`, `#msa-v2`) working. Content updates automatically when you
+publish a new version — the snippet never changes. The embed serves **all**
+published documents (MSA, HIPAA BAA, anything you add). Optional: restrict
+which websites may frame it (empty = any; the content is public either way,
+the restriction only prevents other sites passing your agreements off as
+theirs), and a `?theme=dark|auto` / `data-theme` toggle.
+
+## Visitor log
+
+Every view of the public `/legal` pages and of the embed frame is recorded
+in the local `LegalVisit` table (screen: `/visits`, with document/date
+filters and CSV export). **Exactly what is stored per visit:**
+
+- timestamp, path, document slug/version viewed (the embed records the list
+  of documents shown)
+- visitor IP address (**or** a salted SHA-256 hash when *hash visitor IPs*
+  is on — default off; set `VISIT_IP_HASH_SALT`), user agent, referrer
+  (for the embed this is the page your snippet is on)
+- country/region — derived **only** from proxy geo headers you control
+  (`CF-IPCountry`, `X-Vercel-IP-Country(-Region)`, `X-Geo-*`). No external
+  geo lookup is ever made; with no proxy geo headers these stay empty
+- a random per-page-load visit id and accumulated visible time-on-page from
+  the read timer (server-clamped). **No cookies, no localStorage, no
+  cross-visit identifier** — the embed frame sets no cookie at all
+
+**Retention is yours to configure** (`/embed` → visit retention, default
+365 days); the scheduled job purges older rows. You self-host this data, so
+GDPR/CCPA obligations for visitor IPs rest with you — if that concerns you,
+turn on IP hashing and shorten retention.
+
+## Liveness monitor
+
+The monitor fetches your website's `/legal` page on a schedule and asserts
+the embed is actually present — not just HTTP 200: it checks the snippet
+markers on your page *and* that this install's frame renders. After **two
+consecutive failures** it emails your MSP notification address once per
+outage, with one recovery notice when the page is healthy again (nothing in
+between; delivery uses the configured email provider — until one is set up,
+outages are still recorded and shown on `/embed`).
+
+Wire the schedule with any cron (every 5–15 minutes):
+
+```
+*/10 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://YOUR-INSTALL/api/cron/liveness
+```
+
+Set `CRON_SECRET` in the environment. The same tick runs the visitor-log
+retention purge. (`?secret=` is accepted too, but the header form keeps the
+secret out of proxy logs.)
+
 ## Status
 
 Scaffold stage. The build is green and the architecture is set; capability
