@@ -10,23 +10,43 @@
 // ── SSRF guard ──
 //
 // The probe fetches a URL a form submitted, from the server — the textbook
-// server-side request forgery shape (CodeQL js/request-forgery flagged it on
-// this PR, correctly). Single-operator self-hosted app or not, the probe
-// must never be usable to poke loopback services, the LAN, or a cloud
-// metadata endpoint. So: every hostname is DNS-resolved and every resolved
-// address must be public BEFORE we connect, and redirects are followed
-// MANUALLY with the same check per hop — a public site redirecting to
-// http://169.254.169.254/ is the classic laundering step. The same guard is
-// what SHA-2957's liveness checker should reuse.
+// server-side request forgery shape (CodeQL js/request-forgery flags it on
+// this PR; the flow it describes is the feature itself, so the finding can
+// only be mitigated, never made to disappear). Single-operator self-hosted
+// app or not, the probe must never be usable to poke loopback services, the
+// LAN, or a cloud metadata endpoint. The guard:
+//
+//   1. Only http(s) URLs.
+//   2. Every hostname is DNS-resolved and every resolved address must be
+//      public BEFORE we connect.
+//   3. The socket then dials EXACTLY the address we vetted — the transport
+//      pins it via a custom `lookup`, so a DNS answer that changes between
+//      the check and the connect (DNS rebinding) cannot redirect the
+//      connection. TLS SNI and certificate validation still use the
+//      hostname.
+//   4. Redirects are followed MANUALLY with the same vet-then-pin per hop —
+//      a public site redirecting to http://169.254.169.254/ is the classic
+//      laundering step.
+//
+// The same guard is what SHA-2957's liveness checker should reuse.
 
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import type { LookupFunction } from "node:net";
 
 export type ReachabilityResult =
   | { ok: true; status: number }
   | { ok: false; reason: string };
 
 export type LookupFn = (hostname: string) => Promise<string[]>;
+
+/** One redirect hop as the transport saw it. */
+export type ProbeHop = { status: number; location: string | null };
+
+/** Performs one GET against `url`, connecting only to `pinnedAddress`. */
+export type TransportFn = (url: URL, pinnedAddress: string, timeoutMs: number) => Promise<ProbeHop>;
 
 const MAX_REDIRECTS = 5;
 
@@ -69,10 +89,15 @@ function ipv4IsPrivate(addr: string): boolean {
   return false;
 }
 
-/** Resolve the URL's host and refuse it unless every address is public. */
-async function checkUrlTarget(url: URL, lookupFn: LookupFn): Promise<string | null> {
+/** Resolve the URL's host; return the vetted address to pin, or a refusal.
+ *  Every resolved address must be public — one private answer refuses the
+ *  whole host, so a mixed public/private answer cannot be laundered. */
+async function vetUrlTarget(
+  url: URL,
+  lookupFn: LookupFn,
+): Promise<{ refused: string } | { address: string }> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return "is not an http(s) URL";
+    return { refused: "is not an http(s) URL" };
   }
   // URL brackets IPv6 literals; strip them so isIP/lookup see the address.
   const host = url.hostname.replace(/^\[|\]$/g, "");
@@ -83,26 +108,69 @@ async function checkUrlTarget(url: URL, lookupFn: LookupFn): Promise<string | nu
     try {
       addresses = await lookupFn(host);
     } catch {
-      return "could not be reached (DNS failure)";
+      return { refused: "could not be reached (DNS failure)" };
     }
   }
-  if (addresses.length === 0) return "could not be reached (DNS failure)";
+  if (addresses.length === 0) return { refused: "could not be reached (DNS failure)" };
   if (addresses.some((a) => isPrivateAddress(a))) {
-    return "resolves to a private or internal address, which the probe will not contact";
+    return { refused: "resolves to a private or internal address, which the probe will not contact" };
   }
-  return null;
+  return { address: addresses[0] };
+}
+
+/** One GET over node:http(s) with the connection pinned to `pinnedAddress`:
+ *  the `lookup` handed to the socket returns only the address the caller
+ *  already vetted, never a fresh DNS answer. The body is drained unread. */
+function defaultTransport(url: URL, pinnedAddress: string, timeoutMs: number): Promise<ProbeHop> {
+  return new Promise((resolve, reject) => {
+    const https = url.protocol === "https:";
+    const family = isIP(pinnedAddress);
+    const pinnedLookup: LookupFunction = (_hostname, options, callback) => {
+      if (options.all) {
+        callback(null, [{ address: pinnedAddress, family }]);
+      } else {
+        (callback as (err: Error | null, address: string, family: number) => void)(
+          null,
+          pinnedAddress,
+          family,
+        );
+      }
+    };
+    const req = (https ? httpsRequest : httpRequest)(
+      {
+        hostname: url.hostname.replace(/^\[|\]$/g, ""),
+        port: url.port ? Number(url.port) : https ? 443 : 80,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        headers: { "user-agent": "Standard-MSA onboarding check" },
+        timeout: timeoutMs,
+        lookup: pinnedLookup,
+      },
+      (res) => {
+        res.resume();
+        resolve({ status: res.statusCode ?? 0, location: res.headers.location ?? null });
+      },
+    );
+    req.on("timeout", () => {
+      const err = new Error(`no response within ${timeoutMs}ms`);
+      err.name = "TimeoutError";
+      req.destroy(err);
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 /**
  * One GET per hop with a short timeout. GET rather than HEAD: enough real
  * sites answer HEAD with 405/403 that a HEAD-only probe would cry wolf, and
  * we read no body either way. Redirects are followed by hand so every hop
- * passes the private-address check. `fetchFn`/`lookupFn` are injectable so
+ * passes the vet-then-pin guard. `transport`/`lookupFn` are injectable so
  * tests never touch the network.
  */
 export async function probeWebsite(
   url: string,
-  fetchFn: typeof fetch = fetch,
+  transport: TransportFn = defaultTransport,
   timeoutMs = 5000,
   lookupFn: LookupFn = defaultLookup,
 ): Promise<ReachabilityResult> {
@@ -114,17 +182,12 @@ export async function probeWebsite(
   }
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const refused = await checkUrlTarget(current, lookupFn);
-    if (refused) return { ok: false, reason: refused };
+    const vetted = await vetUrlTarget(current, lookupFn);
+    if ("refused" in vetted) return { ok: false, reason: vetted.refused };
 
-    let res: Response;
+    let res: ProbeHop;
     try {
-      res = await fetchFn(current.toString(), {
-        method: "GET",
-        redirect: "manual",
-        signal: AbortSignal.timeout(timeoutMs),
-        headers: { "user-agent": "Standard-MSA onboarding check" },
-      });
+      res = await transport(current, vetted.address, timeoutMs);
     } catch (err) {
       const name = err instanceof Error ? err.name : "";
       if (name === "TimeoutError" || name === "AbortError") {
@@ -134,17 +197,16 @@ export async function probeWebsite(
     }
 
     if ([301, 302, 303, 307, 308].includes(res.status)) {
-      const location = res.headers.get("location");
-      if (!location) return { ok: false, reason: `redirected (HTTP ${res.status}) without a destination` };
+      if (!res.location) return { ok: false, reason: `redirected (HTTP ${res.status}) without a destination` };
       try {
-        current = new URL(location, current);
+        current = new URL(res.location, current);
       } catch {
         return { ok: false, reason: `redirected (HTTP ${res.status}) to an invalid URL` };
       }
       continue;
     }
 
-    if (res.ok) return { ok: true, status: res.status };
+    if (res.status >= 200 && res.status <= 299) return { ok: true, status: res.status };
     return { ok: false, reason: `responded with HTTP ${res.status}` };
   }
 
