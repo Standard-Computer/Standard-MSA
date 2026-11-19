@@ -21,7 +21,7 @@ test(".env.example contains placeholders only", () => {
     if (!m) continue;
     const [, name, raw] = m;
     const value = raw.replace(/^"|"$/g, "");
-    if (["DATABASE_URL", "APP_BASE_URL", "SMTP_PORT"].includes(name)) continue;
+    if (["DATABASE_URL", "APP_BASE_URL", "SMTP_PORT", "SMTP_SECURE"].includes(name)) continue;
     assert.equal(value, "", `${name} must ship empty in .env.example`);
   }
 });

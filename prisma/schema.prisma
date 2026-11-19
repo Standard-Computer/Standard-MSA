@@ -231,6 +231,47 @@ model EmailProviderConfig {
   updatedAt     DateTime @updatedAt
 }
 
+// One queued/attempted outbound message. The id doubles as the per-send
+// unique identifier C5 needs: stamped as X-StandardMSA-Outbound-Id, used in
+// the open-pixel and click routes, echoed back by provider webhooks.
+model EmailOutbound {
+  id                String               @id @default(uuid())
+  toAddress         String
+  subject           String
+  bodyText          String
+  bodyHtml          String?
+  kind              String               @default("transactional") // caller tag: send|notice|test|…
+  refJson           String               @default("{}") // caller reference, e.g. {"sendId":12}
+  provider          String? // adapter slug resolved at send time
+  status            String               @default("queued") // queued|sending|sent|failed|bounced|complained
+  attempts          Int                  @default(0)
+  nextAttemptAt     DateTime             @default(now())
+  lastError         String? // always redacted before storage
+  providerMessageId String?
+  linksJson         String               @default("[]") // click-wrapped targets by index (no open redirect)
+  openedAt          DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  events            EmailDeliveryEvent[]
+
+  @@index([status, nextAttemptAt])
+  @@index([providerMessageId])
+}
+
+// Append-only delivery log other modules read (bounces, complaints, opens,
+// clicks — from our pixel/click routes and from provider webhooks).
+model EmailDeliveryEvent {
+  id         Int           @id @default(autoincrement())
+  outboundId String
+  outbound   EmailOutbound @relation(fields: [outboundId], references: [id])
+  type       String // queued|sent|delivered|bounced|complained|opened|clicked|failed
+  source     String        @default("app") // app|webhook|pixel|click
+  occurredAt DateTime      @default(now())
+  metaJson   String        @default("{}")
+
+  @@index([outboundId, occurredAt])
+}
+
 // ── API surface (SHA-2960) ──────────────────────────────────────────────────
 
 model ApiKey {
