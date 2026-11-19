@@ -60,9 +60,12 @@ export default async function NewSendPage({
         <div className="mt-6 rounded-lg border border-slate-200 p-4 text-sm text-slate-600">
           <p className="font-medium text-slate-800">No published document to send.</p>
           <p className="mt-1">
-            A send is always of a <em>published</em> version — a draft is not an offer. This
-            build has no document authoring screen yet, so published versions come from the
-            database directly.
+            A send is always of a <em>published</em> version — a draft is not an offer. Author
+            or import your MSA on{" "}
+            <Link href="/documents" className="text-blue-700 underline">
+              Documents
+            </Link>{" "}
+            and publish it, then come back here.
           </p>
         </div>
       ) : (

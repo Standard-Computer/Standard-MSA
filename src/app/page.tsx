@@ -27,6 +27,12 @@ const modules = [
     href: null,
   },
   {
+    title: "Documents",
+    body: "Author the MSA / HIPAA BAA: drafts, preview, publish, version history. Starter templates included.",
+    lane: "SHA-3086",
+    href: "/documents",
+  },
+  {
     title: "MSA sends",
     body: "Unique per-recipient MSAs with full lifecycle tracking and acceptance evidence.",
     lane: "SHA-2959",

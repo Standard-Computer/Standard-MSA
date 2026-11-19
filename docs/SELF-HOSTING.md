@@ -36,6 +36,32 @@ First visit: open `http://your-host:3000` — you land in the onboarding
 wizard (MSP identity, venue, contract header). It is skippable and
 re-runnable from Settings → Identity.
 
+### Put your MSA (and HIPAA BAA) into it
+
+A fresh install has **zero documents** — `/legal` is empty and there is
+nothing to send until you author one. From the home page, open
+**Documents**:
+
+1. **Import a starter template** (Master Service Agreement, HIPAA Business
+   Associate Agreement) or create a blank document and paste your own
+   text. Templates arrive as *your* draft — the body is Markdown with
+   `{{variable}}` placeholders that fill from your MSP identity and, on
+   each send, the recipient's details.
+2. **Edit the draft** and watch the live preview — it renders through the
+   exact pipeline the public `/legal` page and the website embed use.
+   Drafts are invisible publicly.
+3. **Publish.** The version becomes public at `/legal/<slug>`, immutable,
+   and sendable from Sends → New. Publishing never emails anybody; telling
+   prior recipients about an update is a separate, explicit choice on
+   Sends → Update notices.
+
+> **The starter templates are examples, not legal advice.** They exist so
+> the product works out of the box; have your own counsel review anything
+> before you publish or send it.
+
+The same authoring is available over the API (`POST /api/v1/documents`,
+`POST /api/v1/documents/{slug}/versions` — see [API.md](API.md)).
+
 ### Environment
 
 Every setting ships as a placeholder in `.env.example`; nothing real is in

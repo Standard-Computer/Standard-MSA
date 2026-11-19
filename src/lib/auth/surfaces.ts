@@ -124,6 +124,8 @@ export const SURFACES: readonly Surface[] = [
   { pattern: "/onboarding", kind: "operator", refusal: "redirect" },
   { pattern: "/embed", kind: "operator", refusal: "redirect" },
   { pattern: "/settings/**", kind: "operator", refusal: "redirect" },
+  { pattern: "/documents", kind: "operator", refusal: "redirect" },
+  { pattern: "/documents/**", kind: "operator", refusal: "redirect" },
   { pattern: "/sends", kind: "operator", refusal: "redirect" },
   { pattern: "/sends/new", kind: "operator", refusal: "redirect" },
   { pattern: "/sends/notices", kind: "operator", refusal: "redirect" },
