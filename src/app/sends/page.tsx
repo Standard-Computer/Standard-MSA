@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FUNNEL_STAGES, funnelFor, readSeconds, type Funnel } from "@/lib/sends/lifecycle";
 import { listNoticeCandidates } from "@/lib/sends/notices";
 import { allSends, type SendWithTrail } from "@/lib/sends/sends";
+import { requireOperator } from "@/lib/auth/page";
 
 // Operator screen: the send funnel per document and per recipient (SHA-2959).
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export default async function SendsPage({
   searchParams: Promise<{ ok?: string; msg?: string }>;
 }) {
   const { ok, msg } = await searchParams;
+  await requireOperator("/sends");
   const [sends, candidates] = await Promise.all([allSends(), listNoticeCandidates()]);
   const groups = groupByDocument(sends);
 

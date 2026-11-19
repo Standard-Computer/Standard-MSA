@@ -5,6 +5,7 @@ import { NOTICE_AUDIENCE_LABELS, NOTICE_AUDIENCES } from "@/lib/sends/audience";
 import { getEmailConfig } from "@/lib/email/config";
 import { listNoticeCandidates, noticeContext } from "@/lib/sends/notices";
 import { sendNoticeAction } from "./actions";
+import { requireOperator } from "@/lib/auth/page";
 
 // Operator screen: offer the update notice (SHA-2959).
 //
@@ -28,6 +29,7 @@ export default async function NoticesPage({
   searchParams: Promise<{ documentId?: string; ok?: string; msg?: string }>;
 }) {
   const { documentId, ok, msg } = await searchParams;
+  await requireOperator("/sends/notices");
   const selectedId = Number(documentId);
   const [candidates, emailState] = await Promise.all([listNoticeCandidates(), getEmailConfig()]);
   const context =

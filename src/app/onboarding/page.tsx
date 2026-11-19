@@ -3,11 +3,13 @@
 import OnboardingWizard from "@/components/identity/OnboardingWizard";
 import { mspIdentity, toInput } from "@/lib/identity/identity";
 import { saveIdentityAction, skipOnboardingAction } from "./actions";
+import { requireOperator } from "@/lib/auth/page";
 
 // Reads the database on every request; must never be prerendered at build.
 export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage() {
+  await requireOperator("/onboarding");
   const row = await mspIdentity();
   const rerun = !!row?.onboardingCompletedAt;
 
