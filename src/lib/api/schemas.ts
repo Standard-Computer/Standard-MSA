@@ -46,6 +46,42 @@ export const SendCreateSchema = z
   })
   .describe("Create one MSA send. `email` alone is enough; everything else is optional.");
 
+// Authoring (SHA-3086). The slug pattern mirrors
+// src/lib/legal/authoringRules.ts: it becomes a public /legal URL segment.
+export const DocumentCreateSchema = z
+  .object({
+    slug: z
+      .string()
+      .regex(/^[a-z0-9-]{1,80}$/)
+      .describe(
+        'URL slug, fixed at creation, e.g. "msa" or "hipaa-baa". Lowercase a-z, 0-9 and hyphens; must not start or end with a hyphen (enforced by the handler).',
+      ),
+    title: z.string().min(1).max(200).describe("Human title shown on /legal and in sends."),
+    kind: z
+      .string()
+      .max(40)
+      .describe('Document kind, e.g. "msa" or "hipaa-baa" (free-form; default "msa").')
+      .optional(),
+  })
+  .describe("Create a document (an empty shell — add a draft version to give it text).");
+
+export const DocumentVersionCreateSchema = z
+  .object({
+    bodyMarkdown: z
+      .string()
+      .min(1)
+      .max(500_000)
+      .describe("Contract body as Markdown with {{variable}} placeholders."),
+    variables: z
+      .record(z.string().max(60), z.string().max(2000))
+      .describe("Editable defaults for {{tokens}} that are neither MSP- nor client-sourced.")
+      .optional(),
+    changelog: z.string().max(2000).describe("What changed in this version.").optional(),
+  })
+  .describe(
+    "Open the next DRAFT version. Drafts are publicly invisible until published; a document has at most one open draft.",
+  );
+
 export const PublishSchema = z
   .object({
     sendUpdateNotices: z
