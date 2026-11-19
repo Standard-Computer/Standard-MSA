@@ -8,6 +8,7 @@ export const API_SCOPES = [
   "sends:read",
   "sends:write",
   "documents:read",
+  "documents:write",
   "documents:publish",
   "stats:read",
   "webhooks:manage",
