@@ -11,6 +11,9 @@ import { OUTBOUND_ID_HEADER, type OutboundPayload, type ResolvedEmailConfig } fr
 export const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 60_000;
 const MAX_DELAY_MS = 6 * 60 * 60 * 1000;
+// A row stuck in "sending" longer than this was stranded by a process death
+// mid-attempt; the sweep re-queues it (see processEmailQueue).
+export const STUCK_SENDING_AFTER_MS = 15 * 60 * 1000;
 
 /** Exponential backoff: 1m, 2m, 4m, 8m… capped at 6h. Pure, unit-tested. */
 export function retryDelayMs(attemptsSoFar: number): number {
@@ -90,7 +93,9 @@ async function recordFailure(
       provider: providerSlug,
       attempts,
       lastError: safeError,
-      nextAttemptAt: exhausted ? undefined : new Date(Date.now() + retryDelayMs(attempts)),
+      // outbound.attempts (pre-increment) so the first failure waits
+      // retryDelayMs(0) = 1m, matching the documented schedule.
+      nextAttemptAt: exhausted ? undefined : new Date(Date.now() + retryDelayMs(outbound.attempts)),
       events: {
         create: {
           type: "failed",
@@ -105,10 +110,24 @@ async function recordFailure(
 /**
  * Process due queued messages (cron sweep). Claims each row by flipping
  * queued→sending so concurrent sweeps never double-send.
+ *
+ * Delivery is at-least-once: the reaper below re-queues rows stranded in
+ * "sending" by a process death mid-attempt, so a crash after the provider
+ * accepted but before the status flip re-sends that message. For a
+ * transactional mailer that is the right trade — the alternative is silent
+ * permanent loss.
  */
 export async function processEmailQueue(limit = 20): Promise<{ attempted: number; sent: number }> {
   const state = await getEmailConfig();
   if (!state.configured) return { attempted: 0, sent: 0 };
+
+  // Reaper: nothing else ever selects status:"sending", so without this a
+  // row stranded there (deploy, OOM, SIGTERM during a provider call) is
+  // lost forever. updatedAt is @updatedAt, so the claim itself stamps it.
+  await prisma.emailOutbound.updateMany({
+    where: { status: "sending", updatedAt: { lt: new Date(Date.now() - STUCK_SENDING_AFTER_MS) } },
+    data: { status: "queued" },
+  });
 
   const due = await prisma.emailOutbound.findMany({
     where: { status: "queued", nextAttemptAt: { lte: new Date() } },
@@ -125,8 +144,17 @@ export async function processEmailQueue(limit = 20): Promise<{ attempted: number
     });
     if (claimed.count === 0) continue; // another sweep took it
     attempted += 1;
-    const result = await attemptDelivery(outbound, state.config);
-    if (result.sent) sent += 1;
+    try {
+      const result = await attemptDelivery(outbound, state.config);
+      if (result.sent) sent += 1;
+    } catch (err) {
+      // One throwing row (e.g. SQLITE_BUSY inside attemptDelivery) must not
+      // abort the batch or strand this row in "sending".
+      await prisma.emailOutbound.update({
+        where: { id: outbound.id },
+        data: { status: "queued", lastError: redactSecrets(`Sweep error: ${String(err)}`) },
+      });
+    }
   }
   return { attempted, sent };
 }

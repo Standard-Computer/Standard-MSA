@@ -12,6 +12,10 @@ import type {
 } from "../types";
 
 const API_URL = "https://api.sendgrid.com/v3/mail/send";
+// Signed webhooks older/newer than this are rejected: the ECDSA signature
+// covers timestamp+body, so without a freshness check a captured payload
+// replays forever.
+const MAX_WEBHOOK_SKEW_MS = 5 * 60 * 1000;
 
 export const sendgridProvider: EmailProvider = {
   slug: "sendgrid",
@@ -85,6 +89,10 @@ export const sendgridProvider: EmailProvider = {
       const signature = headers["x-twilio-email-event-webhook-signature"];
       const timestamp = headers["x-twilio-email-event-webhook-timestamp"];
       if (!signature || !timestamp) return null;
+      const timestampMs = Number(timestamp) * 1000;
+      if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > MAX_WEBHOOK_SKEW_MS) {
+        return null;
+      }
       if (!verifySignature(publicKeyB64, timestamp + body, signature)) return null;
     }
 
