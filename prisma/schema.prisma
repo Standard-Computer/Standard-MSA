@@ -297,6 +297,8 @@ model ApiRequestLog {
   status     Int
   ip         String?
   durationMs Int      @default(0)
+  /** Cause of an internal_error response, for the operator; null otherwise. */
+  error      String?
   occurredAt DateTime @default(now())
 
   @@index([apiKeyId, occurredAt])
