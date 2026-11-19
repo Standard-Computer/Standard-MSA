@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 
 import { isNoticeAudience, parseSelectedRecipientIds } from "@/lib/sends/audience";
 import { sendUpdateNotice } from "@/lib/sends/notices";
+import { requireOperator } from "@/lib/auth/page";
 
 function finish(documentId: number, ok: boolean, message: string): never {
   redirect(
@@ -19,6 +20,8 @@ function finish(documentId: number, ok: boolean, message: string): never {
 }
 
 export async function sendNoticeAction(formData: FormData): Promise<void> {
+  // Operator-only (SHA-3047): this action mails real recipients.
+  await requireOperator("/sends/notices");
   const documentId = Number(String(formData.get("documentId") ?? ""));
   if (!Number.isInteger(documentId) || documentId <= 0) {
     redirect("/sends/notices?ok=0&msg=Unknown%20document.");

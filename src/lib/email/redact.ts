@@ -22,6 +22,18 @@ const SECRET_PATTERNS: RegExp[] = [
 
 export const REDACTED = "[redacted]";
 
+// Values worth masking while KEEPING the surrounding shape, so the delivery
+// log still says what kind of thing was removed.
+const MASKED_PATTERNS: readonly { readonly pattern: RegExp; readonly mask: string }[] = [
+  // A send token inside an agreement link (SHA-3047). The token is the whole
+  // authorisation to read and accept one agreement; the MSA email body
+  // carries it verbatim, and an SMTP rejection routinely quotes the message
+  // back at us — which would park it in EmailOutbound.lastError, which the
+  // operator UI renders. Anchored on the /msa/ path so only our own links
+  // match and ordinary base64-ish provider noise is left readable.
+  { pattern: /(\/msa\/)[A-Za-z0-9_-]{22,64}/g, mask: `$1${REDACTED}` },
+];
+
 /** Replace any known secret value or secret-shaped substring with [redacted]. */
 export function redactSecrets(text: string, extraSecrets: string[] = []): string {
   let out = text;
@@ -36,6 +48,9 @@ export function redactSecrets(text: string, extraSecrets: string[] = []): string
   }
   for (const pattern of SECRET_PATTERNS) {
     out = out.replace(pattern, REDACTED);
+  }
+  for (const { pattern, mask } of MASKED_PATTERNS) {
+    out = out.replace(pattern, mask);
   }
   return out;
 }

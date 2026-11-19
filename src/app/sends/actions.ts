@@ -9,6 +9,12 @@ import { prisma } from "@/lib/db";
 import { validateRecipientInput, type RecipientInput } from "@/lib/sends/fields";
 import { dispatchSend } from "@/lib/sends/msaEmail";
 import { createSend, sendById } from "@/lib/sends/sends";
+import { requireOperator } from "@/lib/auth/page";
+
+// AUTH (SHA-3047): every action here calls requireOperator() first. A server
+// action is a POST endpoint on its page's path, so gating the screen alone
+// would leave the write reachable by anyone who can derive an action id —
+// and this repo is public, so that build is reproducible.
 
 function finish(path: string, ok: boolean, message: string): never {
   redirect(`${path}?ok=${ok ? "1" : "0"}&msg=${encodeURIComponent(message)}`);
@@ -38,6 +44,7 @@ function recipientFrom(formData: FormData): Partial<RecipientInput> {
  * misconfigured would lose the captured details for no reason.
  */
 export async function createAndSendAction(formData: FormData): Promise<void> {
+  await requireOperator("/sends/new");
   const versionIdRaw = String(formData.get("documentVersionId") ?? "");
   const documentVersionId = Number(versionIdRaw);
   if (!Number.isInteger(documentVersionId) || documentVersionId <= 0) {
@@ -72,6 +79,7 @@ export async function createAndSendAction(formData: FormData): Promise<void> {
 
 /** Re-send the same unique URL to the same recipient. */
 export async function resendAction(formData: FormData): Promise<void> {
+  await requireOperator("/sends");
   const sendId = Number(String(formData.get("sendId") ?? ""));
   if (!Number.isInteger(sendId) || sendId <= 0) {
     finish("/sends", false, "Unknown send.");

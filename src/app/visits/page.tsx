@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { parseVisitFilters, visitWhere } from "@/lib/visits/query";
+import { requireOperator } from "@/lib/auth/page";
 
 // Operator screen: the visitor log (SHA-2957) — list, filter by document and
-// date, CSV export. Same auth note as /embed: behind the operator gate the
-// moment SHA-2956 lands one.
+// date, CSV export. Behind the operator gate (SHA-3047): the rows carry
+// visitor IPs and user agents.
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 200;
@@ -15,6 +16,7 @@ export default async function VisitsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
+  await requireOperator("/visits");
   const filters = parseVisitFilters(params);
   const where = visitWhere(filters);
 

@@ -7,6 +7,7 @@ import { getEmailConfig } from "@/lib/email/config";
 import { describeSecret } from "@/lib/email/redact";
 import { getProvider, listProviders } from "@/lib/email/registry";
 import { saveEmailSettings, sendTestEmailAction } from "./actions";
+import { requireOperator } from "@/lib/auth/page";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ export default async function EmailSettingsPage({
   searchParams: Promise<{ ok?: string; msg?: string }>;
 }) {
   const { ok, msg } = await searchParams;
+  await requireOperator("/settings/email");
   const state = await getEmailConfig();
   const activeRow = await prisma.emailProviderConfig.findFirst({
     where: { active: true },

@@ -9,20 +9,23 @@ import {
 import { legalSettings, updateLegalSettings } from "@/lib/legal/settings";
 import { getAlertSender } from "@/lib/liveness/delivery";
 import { CopyButton } from "@/components/legal/CopyButton";
+import { requireOperator } from "@/lib/auth/page";
 
 // Operator screen: the snippet generator + embed/monitor settings
 // (SHA-2957). Server-rendered with a server action — no client state beyond
 // the copy buttons.
 //
-// NOTE ON AUTH: the scaffold has no operator auth story yet; it arrives with
-// the onboarding lane (SHA-2956) for every non-public screen at once. This
-// page exposes no secret — the snippet is public by design and the settings
-// here control a public surface — but it must be behind the operator gate
-// the moment one exists.
+// AUTH: behind the operator gate (SHA-3047). The snippet itself is public by
+// design, but the settings here control a public surface — the embed origin
+// allow-list and the visit retention window — so a stranger must not reach
+// the form that changes them.
 export const dynamic = "force-dynamic";
 
 async function saveSettings(formData: FormData) {
   "use server";
+  // A server action is a POST endpoint on this page's path; gating only the
+  // render would leave the write reachable (SHA-3047).
+  await requireOperator("/embed");
   const originsRaw = String(formData.get("embedOrigins") ?? "");
   const retentionRaw = Number.parseInt(String(formData.get("visitRetentionDays") ?? ""), 10);
   await updateLegalSettings({
@@ -49,6 +52,7 @@ async function requestBaseUrl(): Promise<string> {
 }
 
 export default async function EmbedAdminPage() {
+  await requireOperator("/embed");
   const [settings, monitor, sender, identity, baseUrl] = await Promise.all([
     legalSettings(),
     prisma.monitorState.findFirst({ orderBy: { id: "asc" } }),
