@@ -8,6 +8,7 @@ import { outboundsForSend, projectDeliverySignals } from "@/lib/sends/projection
 import { renderSendDocument } from "@/lib/sends/render";
 import { sendById } from "@/lib/sends/sends";
 import { sendUrl } from "@/lib/sends/tokens";
+import { requireOperator } from "@/lib/auth/page";
 import { resendAction } from "../actions";
 
 // Operator screen: one recipient's whole lifecycle (SHA-2959) — the funnel,
@@ -28,6 +29,10 @@ export default async function SendDetailPage({
 }) {
   const { id } = await params;
   const { ok, msg } = await searchParams;
+  // Before the id is even parsed: this page renders the accept token, and a
+  // 404-vs-200 difference on a sequential integer is itself an enumeration
+  // oracle (SHA-3047).
+  await requireOperator(`/sends/${id}`);
   const sendId = Number(id);
   if (!Number.isInteger(sendId) || sendId <= 0) notFound();
 

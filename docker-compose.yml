@@ -7,6 +7,11 @@ services:
     environment:
       DATABASE_URL: file:/app/data/standard-msa.db
       APP_BASE_URL: http://localhost:3000
+      # Operator sign-in (SHA-3047). Required, and deliberately unset here:
+      # compose refuses to start rather than bring up an instance whose
+      # operator screens are closed to their own owner. Export it, or put
+      # OPERATOR_PASSWORD=... in a .env file next to this one.
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?set OPERATOR_PASSWORD to a long random value (12+ chars) before starting}
     volumes:
       - msa-data:/app/data
     ports:
