@@ -28,9 +28,9 @@ test("customer side renders the ported generic prose, never a value", () => {
   assert.ok(h.signatureLine.includes(CUSTOMER_GENERIC.signerName));
 });
 
-test("effective date resolves per-send: preview reads 'Date of acceptance'", () => {
+test("effective date resolves per-send: preview reads 'the date of acceptance'", () => {
   const h = renderContractHeader(FULL);
-  assert.equal(h.effectiveDateLine, "Effective date: Date of acceptance.");
+  assert.equal(h.effectiveDateLine, "Effective date: the date of acceptance.");
 });
 
 test("missing values render labeled blanks and are listed, not hidden", () => {
