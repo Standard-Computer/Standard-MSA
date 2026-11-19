@@ -80,5 +80,8 @@ test("corrupt stored link list falls back to sending without wrapping", () => {
     config,
   );
   assert.ok(payload.html?.includes("<p>hello</p>"));
-  assert.ok(payload.html?.includes("/api/email/open/ob-123"));
+  // Exact-URL comparison (not a substring check, per CodeQL): the only img
+  // is the open pixel for this outbound.
+  const imgSrcs = [...(payload.html ?? "").matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(imgSrcs, [openPixelUrl(config.baseUrl, "ob-123")]);
 });
