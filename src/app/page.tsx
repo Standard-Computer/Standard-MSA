@@ -33,9 +33,9 @@ const modules = [
   },
   {
     title: "API",
-    body: "API surface for PSA/AI tools to create MSA sends.",
+    body: "API keys, OpenAPI spec and webhooks for PSA/AI tools to create MSA sends.",
     lane: "SHA-2960",
-    href: null,
+    href: "/settings/api",
   },
 ];
 

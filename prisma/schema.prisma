@@ -278,7 +278,78 @@ model ApiKey {
   id         Int       @id @default(autoincrement())
   name       String
   keyHash    String    @unique // sha256 of the key; plaintext shown once at creation
+  prefix     String    @default("") // display prefix ("smsa_ab12cd34…") for the keys screen
+  scopesJson String    @default("[]") // JSON string[] of scopes; [] = all scopes
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
   revokedAt  DateTime?
+  requests   ApiRequestLog[]
+}
+
+// Per-key request log (SHA-2960): one row per authenticated API request, so
+// an MSP can see what each integration actually did with its key.
+model ApiRequestLog {
+  id         Int      @id @default(autoincrement())
+  apiKeyId   Int
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+  method     String
+  path       String
+  status     Int
+  ip         String?
+  durationMs Int      @default(0)
+  occurredAt DateTime @default(now())
+
+  @@index([apiKeyId, occurredAt])
+}
+
+// Stored idempotency replays (SHA-2960): a POST create retried with the same
+// Idempotency-Key returns the stored response instead of a second row.
+model ApiIdempotencyKey {
+  id             Int      @id @default(autoincrement())
+  apiKeyId       Int
+  key            String
+  endpoint       String // method + route template, e.g. "POST /sends"
+  requestHash    String // sha256 of the request body; a mismatch is a 409
+  responseStatus Int
+  responseBody   String
+  createdAt      DateTime @default(now())
+
+  @@unique([apiKeyId, endpoint, key])
+  @@index([createdAt])
+}
+
+// Outbound webhook subscriptions (SHA-2960). The signing secret is generated
+// here and stored as written: HMAC signing needs the plaintext at every
+// delivery, and this database is the MSP's own local file — the secret
+// protects the MSP's RECEIVING endpoint, not this app.
+model Webhook {
+  id         Int               @id @default(autoincrement())
+  url        String
+  eventsJson String            @default("[]") // JSON string[] of event types; [] = all
+  secret     String // HMAC-SHA256 signing secret, returned once by the API
+  active     Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  revokedAt  DateTime?
+  deliveries WebhookDelivery[]
+}
+
+// One webhook event queued for one subscription, with its retry state and
+// the outcome of the last attempt — the auditable "did the PSA hear about
+// this acceptance?" record.
+model WebhookDelivery {
+  id             Int       @id @default(autoincrement())
+  webhookId      Int
+  webhook        Webhook   @relation(fields: [webhookId], references: [id])
+  eventType      String // e.g. "send.accepted"
+  payloadJson    String
+  status         String    @default("pending") // pending|delivered|exhausted
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now())
+  lastStatusCode Int?
+  lastError      String?
+  deliveredAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([webhookId, createdAt])
 }
