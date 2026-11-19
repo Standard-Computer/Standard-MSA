@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { SubmitButton } from "@/components/sends/SubmitButton";
 import { NOTICE_AUDIENCE_LABELS, NOTICE_AUDIENCES } from "@/lib/sends/audience";
 import { getEmailConfig } from "@/lib/email/config";
 import { listNoticeCandidates, noticeContext } from "@/lib/sends/notices";
@@ -174,13 +175,17 @@ export default async function NoticesPage({
               anyone already accepted — their accepted copy stays exactly as accepted.
             </p>
 
-            <button
-              type="submit"
+            <SubmitButton
               disabled={!emailState.configured}
+              pendingLabel="Sending…"
               className="mt-3 rounded bg-slate-900 px-4 py-2 text-sm text-white disabled:bg-slate-400"
             >
               Send update notice
-            </button>
+            </SubmitButton>
+            <p className="mt-2 text-xs text-slate-500">
+              Each recipient is notified once per version. Sending again reaches only people who
+              have not already been told about v{context.version.version}.
+            </p>
           </form>
         </>
       ) : null}

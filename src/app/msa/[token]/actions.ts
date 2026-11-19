@@ -56,5 +56,13 @@ export async function declineAction(formData: FormData): Promise<void> {
   if (!result.ok) {
     finish(token, false, result.error);
   }
-  finish(token, true, "Declined. Nothing has been agreed to, and we have let the sender know.");
+  // Says only what `declineSend` actually did: it writes the `declined` event
+  // to the trail, where the sender sees it on the send's lifecycle. It mails
+  // nobody, so promising that it did would be a lie to the one person who
+  // most needs this page to be straight with them.
+  finish(
+    token,
+    true,
+    "Declined. Nothing has been agreed to, and your decision is recorded on this agreement.",
+  );
 }

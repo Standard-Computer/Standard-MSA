@@ -255,6 +255,33 @@ test("projection is idempotent — safe to run on every page load", async () => 
   assert.equal(final!.events.length, 5);
 });
 
+test("two concurrent page loads project each delivery signal exactly once", async () => {
+  const { send } = await sends.createSend(versionId, { email: "concurrent@mail.shadowpsa.com" });
+  await fakeOutbound(send.id, "concurrent@mail.shadowpsa.com", [
+    { type: "sent", source: "app", at: new Date("2026-11-18T13:00:00Z") },
+    { type: "delivered", source: "webhook", at: new Date("2026-11-18T13:00:30Z") },
+    { type: "opened", source: "pixel", at: new Date("2026-11-18T13:02:00Z") },
+  ]);
+
+  // Both callers hold the SAME pre-projection snapshot, which is exactly what
+  // two operator tabs loading the send at the same moment produce.
+  const snapshot = (await sends.sendByToken(send.token))!;
+  const [first, second] = await Promise.all([
+    projection.projectDeliverySignals(snapshot),
+    projection.projectDeliverySignals(snapshot),
+  ]);
+
+  assert.equal(first + second, 3, "three signals, three appends, no matter who got there first");
+
+  const final = await sends.sendByToken(send.token);
+  assert.deepEqual(sortedTypes(final!.events), ["created", "delivered", "opened", "sent"]);
+  // Duplicates here would be frozen into the next acceptance's evidence.
+  const sources = final!.events
+    .map((e) => projection.projectedFrom(e.metaJson))
+    .filter((id): id is number => id !== null);
+  assert.equal(new Set(sources).size, sources.length, "no delivery event projected twice");
+});
+
 test("an acceptance produces a retrievable, self-contained evidence record", async () => {
   const { send } = await sends.createSend(versionId, {
     email: "evidence@mail.shadowpsa.com",
@@ -264,7 +291,6 @@ test("an acceptance produces a retrievable, self-contained evidence record", asy
   });
   await sends.appendSendEvent(send.id, { type: "viewed", meta: { seconds: 45 } });
 
-  const rendered = await render.renderSendDocument(send);
   const result = await evidence.acceptSend(send.token, {
     acceptorName: "Eve Idence",
     ip: "198.51.100.4",
@@ -272,9 +298,16 @@ test("an acceptance produces a retrievable, self-contained evidence record", asy
   });
   assert.ok(result.ok);
 
+  // Pinned against a re-render of the ACCEPTED send, not of the send as it
+  // was before signing: the two differ (the signed copy names the effective
+  // date), so pinning the earlier one would pass while the stored evidence
+  // described a document nobody can reproduce.
+  const rendered = await render.renderSendDocument((await sends.sendByToken(send.token))!);
+
   const blob = (await evidence.evidenceFor(send.id)) as Record<string, unknown>;
   assert.equal(blob.schema, evidence.EVIDENCE_SCHEMA);
   assert.equal(blob.bodyHash, rendered.bodyHash, "the hash pins the exact words");
+  assert.equal(blob.bodyMarkdown, rendered.markdown);
   assert.ok(typeof blob.bodyMarkdown === "string" && (blob.bodyMarkdown as string).includes("Eve Idence"));
   assert.ok(
     !(blob.bodyMarkdown as string).includes("{{"),
@@ -299,6 +332,51 @@ test("an acceptance produces a retrievable, self-contained evidence record", asy
   const acceptance = blob.acceptance as Record<string, unknown>;
   assert.equal(acceptance.acceptorName, "Eve Idence");
   assert.equal(acceptance.ip, "198.51.100.4");
+});
+
+test("the frozen evidence body names the acceptance date, and matches a later re-read", async () => {
+  const { send } = await sends.createSend(versionId, {
+    email: "dated@mail.shadowpsa.com",
+    fullName: "Dee Ated",
+  });
+
+  // Control: an unaccepted agreement genuinely has no effective date, so the
+  // body says so in prose. This is the wording the frozen copy must NOT keep.
+  const unaccepted = await render.renderSendDocument(send);
+  assert.match(unaccepted.markdown, /on the date of acceptance\./);
+
+  const result = await evidence.acceptSend(send.token, {
+    acceptorName: "Dee Ated",
+    ip: "198.51.100.9",
+    userAgent: "ua",
+  });
+  assert.ok(result.ok);
+
+  const accepted = await sends.sendByToken(send.token);
+  const day = accepted!.acceptedAt!.toISOString().slice(0, 10);
+
+  const blob = (await evidence.evidenceFor(send.id)) as Record<string, unknown>;
+  const frozen = blob.bodyMarkdown as string;
+  assert.ok(
+    frozen.includes(`on ${day}.`),
+    `the frozen agreement must name the day it took effect; tail was: ${frozen.slice(-120)}`,
+  );
+  assert.ok(
+    !frozen.includes("the date of acceptance"),
+    'a signed agreement that still reads "the date of acceptance" names no date at all',
+  );
+
+  // One agreement, one hash. A later reader re-rendering the accepted send
+  // must get the same document the evidence froze — otherwise there are two
+  // copies with two hashes and no record of which one is authoritative.
+  const reread = await render.renderSendDocument(accepted!);
+  assert.equal(reread.markdown, frozen, "the live re-read and the frozen copy must be one document");
+  assert.equal(reread.bodyHash, blob.bodyHash, "...and therefore one hash");
+  assert.notEqual(
+    unaccepted.bodyHash,
+    blob.bodyHash,
+    "the pre-acceptance render is a different document and must not be what got frozen",
+  );
 });
 
 test("a double-submitted acceptance keeps the first signature, and writes no second one", async () => {

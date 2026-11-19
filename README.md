@@ -56,6 +56,12 @@ npm run dev
 Gates (all run in CI): `npm run lint`, `npm run typecheck`, `npm test`,
 `npm run build`.
 
+`npm test` runs node's test runner under `--conditions=react-server`, which is
+how Next resolves modules on the server. Without it `import "server-only"`
+resolves to that marker package's throwing entry point, so a DB-backed test of
+any module transitively importing a `server-only` one fails on import instead
+of on something it asserts.
+
 ## Project layout
 
 ```

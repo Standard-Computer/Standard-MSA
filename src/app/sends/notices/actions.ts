@@ -38,6 +38,14 @@ export async function sendNoticeAction(formData: FormData): Promise<void> {
     finish(documentId, false, result.error);
   }
 
+  // Said out loud rather than folded into the count: an operator who chose
+  // "all prior recipients" and saw fewer mailed than the screen offered is
+  // owed the reason, or the next move is to click again.
+  const alreadyKnew =
+    result.skipped > 0
+      ? ` ${result.skipped} had already been notified about this version and were not mailed again.`
+      : "";
+
   const failed = result.failures.length;
   if (failed > 0) {
     finish(
@@ -45,12 +53,12 @@ export async function sendNoticeAction(formData: FormData): Promise<void> {
       false,
       `Notified ${result.notified}; ${failed} could not be delivered: ${result.failures
         .map((f) => `${f.email} (${f.error})`)
-        .join("; ")}`,
+        .join("; ")}.${alreadyKnew}`,
     );
   }
   finish(
     documentId,
     true,
-    `Update notice sent to ${result.notified} recipient${result.notified === 1 ? "" : "s"}.`,
+    `Update notice sent to ${result.notified} recipient${result.notified === 1 ? "" : "s"}.${alreadyKnew}`,
   );
 }

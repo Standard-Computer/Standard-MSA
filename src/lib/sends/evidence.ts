@@ -51,9 +51,12 @@ export async function acceptSend(token: string, input: AcceptInput): Promise<Acc
 
   const acceptedAt = new Date();
   // Rendered BEFORE the write so the frozen body is the one on screen when
-  // they clicked. The date tokens are supplied explicitly below rather than
-  // taken from the not-yet-saved row.
-  const rendered = await renderSendDocument(send);
+  // they clicked — but with `acceptedAt` passed in, because on this
+  // not-yet-saved row the column is still null and the date tokens would
+  // fall through to the unaccepted "the date of acceptance" prose. The
+  // signed copy has to NAME the day, and has to be the same document (and
+  // therefore the same hash) that a later re-read of this send produces.
+  const rendered = await renderSendDocument(send, { acceptedAt });
 
   try {
     await prisma.$transaction(async (tx) => {

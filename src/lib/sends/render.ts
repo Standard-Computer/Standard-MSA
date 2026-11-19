@@ -31,6 +31,20 @@ export function hashBody(markdown: string): string {
   return createHash("sha256").update(markdown, "utf8").digest("hex");
 }
 
+export type RenderSendOptions = {
+  /**
+   * The acceptance instant to merge into the date tokens, overriding the
+   * send row's own `acceptedAt`.
+   *
+   * Exists for exactly one caller: `acceptSend`, which renders the document
+   * it is about to freeze in the same breath as writing the acceptance. On
+   * that in-memory row `acceptedAt` is still null, so without this the
+   * frozen copy would keep the unaccepted wording and disagree with every
+   * later re-read of the same agreement.
+   */
+  acceptedAt?: Date | null;
+};
+
 /**
  * Render a send's document as the recipient sees it.
  *
@@ -43,14 +57,18 @@ export function hashBody(markdown: string): string {
  * the generic "the date of acceptance" wording rather than showing a blank,
  * because an unaccepted agreement genuinely has no effective date yet.
  */
-export async function renderSendDocument(send: SendWithTrail): Promise<RenderedSend> {
+export async function renderSendDocument(
+  send: SendWithTrail,
+  options: RenderSendOptions = {},
+): Promise<RenderedSend> {
   const identity = await prisma.mspIdentity.findFirst({ orderBy: { id: "asc" } });
   const msp = mspValuesFrom(identity);
   const version = send.documentVersion;
 
+  const acceptedAt = options.acceptedAt ?? send.acceptedAt;
   const recipientValues = {
     ...parseMergeVars(send.mergedVarsJson),
-    ...acceptanceMergeVars(send.acceptedAt),
+    ...acceptanceMergeVars(acceptedAt),
   };
   const markdown = renderLegalBody(
     version.bodyMarkdown,
