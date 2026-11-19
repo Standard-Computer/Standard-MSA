@@ -15,6 +15,11 @@ it runs in production.
   published versions, effective dates, diffs between versions, PDF export.
   Document types are data: v1 ships the MSA and the HIPAA BAA; your custom
   agreement needs no code change.
+- **Authoring built in** — the `/documents` screen creates, drafts,
+  previews and publishes your documents, with MSA and HIPAA BAA starter
+  templates so a fresh install is never empty. **The templates are
+  examples, not legal advice** — have your own counsel review anything
+  before you publish or send it.
 - **Onboarding wizard** — enter MSP identity once (name, legal name, address,
   owner/CEO, website, venue for governing law); preview the contract header;
   re-run any time. Skippable.
@@ -154,8 +159,9 @@ secret out of proxy logs.)
 
 PSA and AI tools integrate through `/api/v1`: create contacts, create MSA
 sends (an email address alone is enough; the response carries the unique
-per-recipient `documentUrl`), follow each send's lifecycle, publish document
-versions, read `/legal` visit stats, and subscribe HMAC-signed webhooks for
+per-recipient `documentUrl`), follow each send's lifecycle, author and
+publish document versions, read `/legal` visit stats, and subscribe
+HMAC-signed webhooks for
 opened/accepted without polling. API keys are created in Settings → API —
 none ship with the product — scoped per integration, hashed at rest, and
 logged per request. The OpenAPI 3.1 spec is served at

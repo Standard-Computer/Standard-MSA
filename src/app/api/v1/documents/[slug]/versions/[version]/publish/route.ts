@@ -11,7 +11,7 @@ import { apiHandler } from "@/lib/api/handler";
 import { intPathParam } from "@/lib/api/params";
 import { PublishSchema } from "@/lib/api/schemas";
 import { serializeDocument, serializeDocumentVersion } from "@/lib/api/serializers";
-import { enqueueWebhookEvent } from "@/lib/api/webhooks";
+import { markPublished } from "@/lib/legal/authoring";
 import { prisma } from "@/lib/db";
 import { sendUpdateNotice } from "@/lib/sends/notices";
 
@@ -29,18 +29,9 @@ export const POST = apiHandler(
     });
     if (!version) throw new ApiError("not_found", "No such document version.");
 
-    const alreadyPublished = version.publishedAt !== null;
-    const published = alreadyPublished
-      ? version
-      : await prisma.legalDocumentVersion.update({
-          where: { id: version.id },
-          data: { publishedAt: new Date() },
-        });
-    if (!alreadyPublished) {
-      await enqueueWebhookEvent("document.published", {
-        document: { slug: doc.slug, title: doc.title, version: published.version },
-      });
-    }
+    // SHA-3086: shared with the /documents operator screen via
+    // markPublished, so "published" means one thing on both surfaces.
+    const { version: published, alreadyPublished } = await markPublished(doc, version);
 
     let notices: { ok: boolean; notified: number; skipped: number; error: string | null } | null =
       null;

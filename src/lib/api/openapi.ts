@@ -12,7 +12,9 @@ import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
   ContactCreateSchema,
   ContactSchema,
+  DocumentCreateSchema,
   DocumentSchema,
+  DocumentVersionCreateSchema,
   DocumentVersionSchema,
   ErrorSchema,
   PublishSchema,
@@ -36,7 +38,9 @@ const SCHEMAS: Record<string, ZodType> = {
   SendCreated: SendCreatedSchema,
   SendEvent: SendEventSchema,
   Document: DocumentSchema,
+  DocumentCreate: DocumentCreateSchema,
   DocumentVersion: DocumentVersionSchema,
+  DocumentVersionCreate: DocumentVersionCreateSchema,
   Publish: PublishSchema,
   WebhookCreate: WebhookCreateSchema,
   Webhook: WebhookSchema,
@@ -221,6 +225,16 @@ export function buildOpenApiDocument(baseUrl: string): Record<string, unknown> {
           scope: "documents:read",
           responses: { "200": jsonBody({ type: "object", properties: { documents: arrayOf("Document") }, required: ["documents"] }, "Every document, drafts included.") },
         }),
+        post: op({
+          summary: "Create a document",
+          scope: "documents:write",
+          idempotent: true,
+          requestBody: { schema: ref("DocumentCreate") },
+          responses: {
+            "201": jsonBody(ref("Document"), "The new document. It has no versions yet — POST /documents/{slug}/versions to give it a draft body."),
+            "409": jsonBody(ref("Error"), "A document with this slug already exists."),
+          },
+        }),
       },
       "/documents/{slug}/versions": {
         get: op({
@@ -230,6 +244,21 @@ export function buildOpenApiDocument(baseUrl: string): Record<string, unknown> {
           responses: {
             "200": jsonBody({ type: "object", properties: { versions: arrayOf("DocumentVersion") }, required: ["versions"] }, "All versions, newest first, drafts flagged."),
             "404": jsonBody(ref("Error"), "No such document."),
+          },
+        }),
+        post: op({
+          summary: "Open the next draft version",
+          scope: "documents:write",
+          idempotent: true,
+          parameters: [idParam("slug", "Document slug.")],
+          requestBody: { schema: ref("DocumentVersionCreate") },
+          responses: {
+            "201": jsonBody(
+              { type: "object", properties: { document: ref("Document"), version: ref("DocumentVersion") }, required: ["document", "version"] },
+              "The new draft (publicly invisible until published via POST …/publish).",
+            ),
+            "404": jsonBody(ref("Error"), "No such document."),
+            "409": jsonBody(ref("Error"), "This document already has an open draft — edit or publish it instead."),
           },
         }),
       },
