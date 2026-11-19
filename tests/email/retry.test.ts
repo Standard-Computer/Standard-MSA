@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { EmailOutbound } from "@prisma/client";
 import { buildPayload, retryDelayMs, MAX_ATTEMPTS } from "../../src/lib/email/queue";
+import { clickUrl, openPixelUrl } from "../../src/lib/email/tracking";
 import { OUTBOUND_ID_HEADER, type ResolvedEmailConfig } from "../../src/lib/email/types";
 
 test("retry backoff doubles from one minute and caps at six hours", () => {
@@ -65,9 +66,12 @@ test("html gets click-wrapped links and an open pixel", () => {
     config,
   );
   assert.ok(payload.html);
-  assert.ok(!payload.html.includes(`href="${target}"`), "raw target must be wrapped");
-  assert.ok(payload.html.includes("https://msa.example.com/api/email/click/ob-123/0"));
-  assert.ok(payload.html.includes("https://msa.example.com/api/email/open/ob-123"));
+  // Exact-URL comparisons (not substring checks): every href must be the
+  // wrapped click URL and the only img must be the open pixel.
+  const hrefs = [...payload.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(hrefs, [clickUrl(config.baseUrl, "ob-123", 0)]);
+  const imgSrcs = [...payload.html.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(imgSrcs, [openPixelUrl(config.baseUrl, "ob-123")]);
 });
 
 test("corrupt stored link list falls back to sending without wrapping", () => {
