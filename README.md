@@ -38,11 +38,13 @@ it runs in production.
 ```sh
 git clone https://github.com/Standard-Computer/Standard-MSA.git
 cd Standard-MSA
+echo "OPERATOR_PASSWORD=$(openssl rand -base64 24)" >> .env
 docker compose up
 ```
 
-Open http://localhost:3000 — the onboarding wizard takes it from there. Data
-lives in a SQLite file on a Docker volume; back up by copying the file.
+Open http://localhost:3000, sign in with that password, and the onboarding
+wizard takes it from there. Data lives in a SQLite file on a Docker volume;
+back up by copying the file.
 
 The full operator guide — email providers, scheduled jobs, upgrades,
 backups, visitor-data retention and your privacy obligations — is
@@ -51,7 +53,7 @@ backups, visitor-data retention and your privacy obligations — is
 ### Development
 
 ```sh
-cp .env.example .env     # defaults are fine for dev
+cp .env.example .env     # then set OPERATOR_PASSWORD; the rest is fine for dev
 npm install
 npx prisma migrate dev
 npm run dev
@@ -177,6 +179,34 @@ licence converts to Apache License 2.0. For other arrangements, contact
 sean@standardcomputer.com.
 
 ## Security
+
+### Who can reach what
+
+Three kinds of request surface, listed in full in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and encoded in
+`src/lib/auth/surfaces.ts`:
+
+- **Public** — your `/legal` site, the embed, and each recipient's own
+  `/msa/<token>` agreement link. The token is 256 bits of CSPRNG and is the
+  whole authorisation: there is deliberately no recipient login, because
+  asking a prospect to create an account is how an MSA does not get signed.
+- **Operator** — everything else: the console, `/sends`, `/settings`, the
+  visitor log, the evidence downloads. Gated server-side on a session cookie
+  minted from `OPERATOR_PASSWORD`.
+- **Machine** — `/api/cron/*` (`CRON_SECRET`), `/api/v1/*` (API key), the
+  webhook and tracking endpoints (provider secret or unguessable uuid).
+
+`OPERATOR_PASSWORD` is **required**. Unset, too short, and the operator
+screens refuse everyone and say what to set — they do not open. It is one
+shared password for the single-operator v0 model, read only from the
+environment (there is no password column), so changing it and restarting
+signs out every open session. Failed sign-ins are throttled per client IP.
+
+If you expose an instance to the internet, put it behind TLS: set
+`APP_BASE_URL` to its `https://` URL and the session cookie is issued
+`Secure` (it is always `HttpOnly` and `SameSite=Lax`).
+
+### Reporting
 
 No credentials belong in this repo, ever. `.env.example` carries placeholders
 only and CI runs a secret scan on every push. If you find a security issue,

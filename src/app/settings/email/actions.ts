@@ -8,12 +8,19 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { providerSlugs } from "@/lib/email/registry";
 import { sendTestEmail } from "@/lib/email/verify";
+import { requireOperator } from "@/lib/auth/page";
+
+// AUTH (SHA-3047): every action here calls requireOperator() first. A server
+// action is a POST endpoint on its page's path, so gating the screen alone
+// would leave the write reachable by anyone who can derive an action id —
+// and this repo is public, so that build is reproducible.
 
 function finish(ok: boolean, message: string): never {
   redirect(`/settings/email?ok=${ok ? "1" : "0"}&msg=${encodeURIComponent(message)}`);
 }
 
 export async function saveEmailSettings(formData: FormData): Promise<void> {
+  await requireOperator("/settings/email");
   const provider = String(formData.get("provider") ?? "");
   const fromAddress = String(formData.get("fromAddress") ?? "").trim();
   if (!providerSlugs().includes(provider)) {
@@ -49,6 +56,7 @@ export async function saveEmailSettings(formData: FormData): Promise<void> {
 }
 
 export async function sendTestEmailAction(formData: FormData): Promise<void> {
+  await requireOperator("/settings/email");
   const to = String(formData.get("to") ?? "").trim();
   const result = await sendTestEmail(to);
   if (result.ok) {
