@@ -7,6 +7,15 @@
 // zero rows means the API answers 401 to everything, which is the secure
 // state a fresh install boots into.
 //
+// SHA-256 without a work factor is deliberate, not an oversight (CodeQL
+// js/insufficient-password-hash flags it; dismissed as a false positive on
+// PR #8). Work-factor hashes exist to protect LOW-entropy human passwords
+// from offline guessing. This input is 256 bits of CSPRNG output that no
+// amount of hashing speed makes guessable, and the hash must run on every
+// API request — a per-request bcrypt/scrypt would be a tunable DoS lever,
+// which is why high-entropy bearer tokens (GitHub PATs, Stripe keys) are
+// stored exactly this way.
+//
 // No `server-only` marker, matching the other DB modules in this repo — the
 // DB-backed tests import this under plain node.
 
