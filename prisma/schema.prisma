@@ -66,16 +66,31 @@ model LegalDocumentVersion {
 }
 
 // Every visit to the public /legal pages (timestamp, IP, region — Sean's ask).
+// SHA-2957 widened this add-only: the embed frame's beacon carries a random,
+// cookie-free visitId so the read-timer can accrue seconds onto the same row,
+// and country/region come from proxy geo headers (never a paid lookup). What
+// is stored and for how long is documented in README § Visitor log; retention
+// and IP hashing are operator knobs on LegalSettings.
 model LegalVisit {
-  id         Int      @id @default(autoincrement())
-  path       String
-  slug       String?
-  version    Int?
-  occurredAt DateTime @default(now())
-  ip         String?
-  userAgent  String?
-  referer    String?
-  region     String? // derived from IP when resolvable; never a paid lookup
+  id            Int      @id @default(autoincrement())
+  path          String
+  slug          String?
+  version       Int?
+  occurredAt    DateTime @default(now())
+  ip            String? // null when hashVisitorIps is on
+  ipHash        String? // salted SHA-256, only when hashVisitorIps is on
+  userAgent     String?
+  referer       String?
+  region        String? // derived from IP when resolvable; never a paid lookup
+  country       String?
+  visitId       String?  @unique // random per frame load; keys read-timer pings
+  theme         String?
+  embedded      Boolean  @default(false) // frame beacon vs direct /legal page
+  secondsOnPage Int      @default(0) // accrued by the read-timer, server-clamped
+  docsJson      String   @default("[]") // slugs rendered in an all-docs frame view
+
+  @@index([occurredAt])
+  @@index([slug, occurredAt])
 }
 
 // Liveness checks of the MSP-site embed (is /legal live on their site?).
@@ -87,6 +102,40 @@ model SiteCheck {
   detail     String?
   checkedAt  DateTime @default(now())
   alerted    Boolean  @default(false)
+}
+
+// Singleton settings for the public /legal surface and embed (SHA-2957).
+// embedOriginsJson is a JSON string[] of normalized origins; empty = any
+// (frame-ancestors is a passing-off control here, not confidentiality — the
+// content is public by definition; see src/lib/legal/embed.ts).
+model LegalSettings {
+  id                 Int      @id @default(autoincrement())
+  embedEnabled       Boolean  @default(true)
+  embedOriginsJson   String   @default("[]")
+  introText          String?
+  footerText         String?
+  accentColor        String   @default("#1d4ed8")
+  visitRetentionDays Int      @default(365)
+  hashVisitorIps     Boolean  @default(false)
+  monitorEnabled     Boolean  @default(false)
+  monitorUrl         String? // the MSP's own public /legal page to probe
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// Debounce state for the liveness monitor (SHA-2957): one alert per outage
+// on the up->down transition (after 2 consecutive failures), one recovery
+// notice on down->up, nothing in between. Singleton row.
+model MonitorState {
+  id                  Int       @id @default(autoincrement())
+  status              String    @default("unknown") // unknown|up|down
+  consecutiveFailures Int       @default(0)
+  downSince           DateTime?
+  lastAlertAt         DateTime?
+  lastRecoveryAt      DateTime?
+  lastCheckedAt       DateTime?
+  lastDetail          String?
+  updatedAt           DateTime  @updatedAt
 }
 
 // ── Recipients and sends (SHA-2959) ─────────────────────────────────────────
