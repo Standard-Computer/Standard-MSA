@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
+import { guardOperatorRequest } from "@/lib/auth/guard";
 import { csvCell, parseVisitFilters, visitWhere } from "@/lib/visits/query";
 
 // CSV export of the visitor log (SHA-2957), honouring the same filters as
@@ -10,6 +11,10 @@ export const dynamic = "force-dynamic";
 const CHUNK = 1000;
 
 export async function GET(req: NextRequest) {
+  // Operator-only: every row carries a visitor IP and user agent (SHA-3047).
+  const refusal = await guardOperatorRequest(req);
+  if (refusal) return refusal;
+
   const filters = parseVisitFilters({
     slug: req.nextUrl.searchParams.get("slug") ?? undefined,
     from: req.nextUrl.searchParams.get("from") ?? undefined,

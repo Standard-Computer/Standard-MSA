@@ -6,10 +6,12 @@ import Link from "next/link";
 import { IDENTITY_FIELD_LABELS, type MspIdentityInput } from "@/lib/identity/fields";
 import { renderContractHeader } from "@/lib/identity/headerPreview";
 import { mspIdentity, needsOnboarding, toInput } from "@/lib/identity/identity";
+import { requireOperator } from "@/lib/auth/page";
 
 export const dynamic = "force-dynamic";
 
 export default async function IdentitySettingsPage() {
+  await requireOperator("/settings/identity");
   const row = await mspIdentity();
   const input = toInput(row);
   const preview = renderContractHeader(input);

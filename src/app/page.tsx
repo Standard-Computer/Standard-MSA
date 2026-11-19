@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { requireOperator } from "@/lib/auth/page";
 import { mspIdentity, needsOnboarding } from "@/lib/identity/identity";
 
 // Reads the database (onboarding redirect); never prerender at build.
@@ -40,6 +41,7 @@ const modules = [
 ];
 
 export default async function Home() {
+  await requireOperator("/");
   // First visit goes to the wizard until it is completed or deliberately
   // skipped (docs/ARCHITECTURE.md § Self-host story).
   const row = await mspIdentity();
