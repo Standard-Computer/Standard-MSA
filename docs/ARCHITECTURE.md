@@ -103,7 +103,7 @@ is already landed; lanes extend without editing each other's files.
 | Lane | Issue | Owns (new files only) |
 |---|---|---|
 | Onboarding / identity | SHA-2956 | `src/lib/identity/**`, `src/app/onboarding/**`, `src/app/settings/identity/**`, `src/components/identity/**`, `tests/identity/**` |
-| Public /legal + embed + visits + liveness | SHA-2957 | `src/lib/legal/**` (documents, versions, variables, embed, footer, intro, diff, import, pdf), `src/lib/visits/**`, `src/lib/liveness/**`, `src/app/legal/**`, `src/app/api/cron/liveness/**`, `src/components/legal/**`, `tests/legal/**` |
+| Public /legal + embed + visits + liveness | SHA-2957 | `src/lib/legal/**` (documents, versions, variables, embed, footer, intro, diff, import, pdf), `src/lib/visits/**`, `src/lib/liveness/**`, `src/app/legal/**`, `src/app/api/legal/**`, `src/app/api/cron/liveness/**`, `src/app/embed/**` (snippet generator), `src/app/visits/**` (visit log UI + CSV), `src/components/legal/**`, `tests/legal/**` |
 | Email delivery | SHA-2958 | `src/lib/email/**` (contract, gates, failure classification, smtp2go/sendgrid/smtp transports), `src/app/settings/email/**`, `tests/email/**` |
 | Sends & acceptance | SHA-2959 | `src/lib/sends/**` (engine, evidence, signature, consent, verify, pdf), `src/lib/notices/**`, `src/app/a/[token]/**` (public signing), `src/app/sends/**` (operator UI), `src/app/api/cron/sweep/**`, `src/components/sends/**`, `tests/sends/**` |
 | Public API + packaging | SHA-2960 | `src/app/api/v1/**`, `src/lib/api/**`, `docs/API.md`, `tests/api/**` |
