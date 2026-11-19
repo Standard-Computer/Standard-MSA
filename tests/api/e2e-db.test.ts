@@ -468,6 +468,26 @@ test("every authenticated request lands in the per-key log", async () => {
   assert.ok(keyRow.lastUsedAt, "lastUsedAt stamped");
 });
 
+test("an internal error's cause lands in the request log, not on the console", async () => {
+  const handlerMod = await import("../../src/lib/api/handler");
+  const boomKey = await keys.createApiKey("boom", ["contacts:read"]);
+  const route = handlerMod.apiHandler(
+    { scope: "contacts:read", endpoint: "GET /boom" },
+    async () => {
+      throw new Error("db exploded");
+    },
+  );
+  const res = await route(request("GET", "/boom", { key: boomKey.plaintext }));
+  assert.equal(res.status, 500);
+  assert.equal((await json(res)).error.code, "internal_error");
+  const rows = await prisma.apiRequestLog.findMany({ where: { apiKey: { name: "boom" } } });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].error, "Error: db exploded");
+  // And a handled (non-internal) failure stores no cause.
+  const denied = await route(request("GET", "/boom", { key: null }));
+  assert.equal(denied.status, 401);
+});
+
 test("openapi.json serves the spec for this instance, unauthenticated", async () => {
   const res = await openapiRoute.GET(new Request(`${BASE}/openapi.json`));
   assert.equal(res.status, 200);

@@ -79,6 +79,7 @@ export function apiHandler(
     const limit = checkRateLimit(apiKey.id);
     const limitHeaders = rateLimitHeaders(limit);
     let result: ApiResult;
+    let failureCause: string | null = null;
     try {
       if (!limit.allowed) {
         throw new ApiError("rate_limited", "Rate limit exceeded for this API key.", {
@@ -120,8 +121,9 @@ export function apiHandler(
             ? validationError(err)
             : new ApiError("internal_error", "Something went wrong handling this request.");
       if (apiErr.code === "internal_error") {
-        // The caller gets the envelope; the operator's log gets the cause.
-        console.error(`[api] ${options.endpoint} failed:`, err);
+        // The caller gets the envelope; the operator's request log gets the
+        // cause (the `error` column below). Nothing goes to stdout/stderr.
+        failureCause = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       }
       result = { status: apiErr.status, body: apiErr.body(), headers: apiErr.headers };
     }
@@ -137,11 +139,14 @@ export function apiHandler(
           status: result.status,
           ip: clientIpFrom((name) => req.headers.get(name)),
           durationMs: Date.now() - startedAt,
+          error: failureCause ? failureCause.slice(0, 500) : null,
         },
       });
       await prisma.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } });
-    } catch (err) {
-      console.error("[api] request log write failed:", err);
+    } catch {
+      // If the log write itself fails there is no durable channel left to
+      // record that in, and the caller's already-handled response must not
+      // become a 500 over bookkeeping.
     }
 
     return jsonResponse(result, limitHeaders);
