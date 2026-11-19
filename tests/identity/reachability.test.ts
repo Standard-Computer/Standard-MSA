@@ -1,29 +1,52 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { isPrivateAddress, probeWebsite } from "../../src/lib/identity/reachability";
+import {
+  isPrivateAddress,
+  probeWebsite,
+  type ProbeHop,
+  type TransportFn,
+} from "../../src/lib/identity/reachability";
 
 const publicLookup = async () => ["93.184.216.34"];
 
-function fakeFetch(responses: (() => Promise<Response>)[]): typeof fetch {
+/** Replays one scripted hop per call; records the address each hop pinned. */
+function fakeTransport(
+  hops: (() => Promise<ProbeHop>)[],
+  pinned: string[] = [],
+): TransportFn {
   let i = 0;
-  return (() => responses[Math.min(i++, responses.length - 1)]()) as typeof fetch;
+  return (_url, pinnedAddress) => {
+    pinned.push(pinnedAddress);
+    return hops[Math.min(i++, hops.length - 1)]();
+  };
 }
 
 test("a 200 answer from a public host is reachable", async () => {
   const result = await probeWebsite(
     "https://example.com",
-    fakeFetch([async () => new Response("ok", { status: 200 })]),
+    fakeTransport([async () => ({ status: 200, location: null })]),
     5000,
     publicLookup,
   );
   assert.deepEqual(result, { ok: true, status: 200 });
 });
 
+test("the transport is handed the vetted address to pin", async () => {
+  const pinned: string[] = [];
+  await probeWebsite(
+    "https://example.com",
+    fakeTransport([async () => ({ status: 200, location: null })], pinned),
+    5000,
+    publicLookup,
+  );
+  assert.deepEqual(pinned, ["93.184.216.34"]);
+});
+
 test("an HTTP error is reported as data, not thrown", async () => {
   const result = await probeWebsite(
     "https://example.com",
-    fakeFetch([async () => new Response("gone", { status: 404 })]),
+    fakeTransport([async () => ({ status: 404, location: null })]),
     5000,
     publicLookup,
   );
@@ -33,9 +56,9 @@ test("an HTTP error is reported as data, not thrown", async () => {
 test("a connection failure is reported as data, not thrown", async () => {
   const result = await probeWebsite(
     "https://example.com",
-    fakeFetch([
+    fakeTransport([
       async () => {
-        throw new TypeError("fetch failed");
+        throw new Error("connect ECONNREFUSED");
       },
     ]),
     5000,
@@ -48,7 +71,7 @@ test("a connection failure is reported as data, not thrown", async () => {
 test("a timeout names the budget", async () => {
   const result = await probeWebsite(
     "https://example.com",
-    fakeFetch([
+    fakeTransport([
       async () => {
         const err = new Error("timed out");
         err.name = "TimeoutError";
@@ -88,18 +111,34 @@ test("private, loopback, link-local and mapped addresses are private", () => {
   }
 });
 
-test("a hostname resolving to a private address is refused before any fetch", async () => {
-  let fetched = false;
+test("a hostname resolving to a private address is refused before any connect", async () => {
+  let connected = false;
   const result = await probeWebsite(
     "https://internal.example.com",
-    (() => {
-      fetched = true;
-      return Promise.resolve(new Response("nope"));
-    }) as unknown as typeof fetch,
+    () => {
+      connected = true;
+      return Promise.resolve({ status: 200, location: null });
+    },
     5000,
     async () => ["10.0.0.5"],
   );
-  assert.equal(fetched, false);
+  assert.equal(connected, false);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /private or internal address/);
+});
+
+test("a mixed public/private DNS answer is refused outright", async () => {
+  let connected = false;
+  const result = await probeWebsite(
+    "https://rebind.example.com",
+    () => {
+      connected = true;
+      return Promise.resolve({ status: 200, location: null });
+    },
+    5000,
+    async () => ["93.184.216.34", "169.254.169.254"],
+  );
+  assert.equal(connected, false);
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.reason, /private or internal address/);
 });
@@ -107,7 +146,7 @@ test("a hostname resolving to a private address is refused before any fetch", as
 test("an IP-literal URL in a private range is refused", async () => {
   const result = await probeWebsite(
     "http://169.254.169.254/latest/meta-data/",
-    fakeFetch([async () => new Response("metadata", { status: 200 })]),
+    fakeTransport([async () => ({ status: 200, location: null })]),
     5000,
     publicLookup,
   );
@@ -119,10 +158,7 @@ test("redirects are followed with the guard applied per hop", async () => {
   // Public host redirects to the metadata endpoint — the laundering case.
   const result = await probeWebsite(
     "https://example.com",
-    fakeFetch([
-      async () =>
-        new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
-    ]),
+    fakeTransport([async () => ({ status: 302, location: "http://169.254.169.254/" })]),
     5000,
     publicLookup,
   );
@@ -130,26 +166,28 @@ test("redirects are followed with the guard applied per hop", async () => {
   if (!result.ok) assert.match(result.reason, /private or internal address/);
 });
 
-test("a legitimate redirect chain still succeeds", async () => {
+test("a legitimate redirect chain still succeeds and re-pins per hop", async () => {
+  const pinned: string[] = [];
   const result = await probeWebsite(
     "http://example.com",
-    fakeFetch([
-      async () =>
-        new Response(null, { status: 301, headers: { location: "https://www.example.com/" } }),
-      async () => new Response("ok", { status: 200 }),
-    ]),
+    fakeTransport(
+      [
+        async () => ({ status: 301, location: "https://www.example.com/" }),
+        async () => ({ status: 200, location: null }),
+      ],
+      pinned,
+    ),
     5000,
     publicLookup,
   );
   assert.deepEqual(result, { ok: true, status: 200 });
+  assert.equal(pinned.length, 2);
 });
 
 test("endless redirects are cut off", async () => {
   const result = await probeWebsite(
     "https://example.com",
-    fakeFetch([
-      async () => new Response(null, { status: 302, headers: { location: "https://example.com/" } }),
-    ]),
+    fakeTransport([async () => ({ status: 302, location: "https://example.com/" })]),
     5000,
     publicLookup,
   );
