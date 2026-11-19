@@ -13,9 +13,11 @@ import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { serializeByKey } from "@/lib/serialize";
 import { ApiError } from "./errors";
+import { IDEMPOTENCY_KEY_MAX_LENGTH } from "./schemas";
+
+export { IDEMPOTENCY_KEY_MAX_LENGTH };
 
 export const IDEMPOTENCY_WINDOW_HOURS = 24;
-export const IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 
 export type StoredResponse = { status: number; body: unknown; replayed: boolean };
 

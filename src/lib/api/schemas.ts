@@ -12,6 +12,10 @@ import { z } from "zod";
 import { API_SCOPES } from "./keys";
 import { WEBHOOK_EVENT_TYPES } from "./webhooks";
 
+// Lives here (not idempotency.ts, which imports the db client) so the PURE
+// spec module can publish the same limit the handler enforces.
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 200;
+
 export const CONTACT_FIELDS = {
   email: z.email().max(320).describe("Contact email address."),
   name: z.string().max(200).describe("Contact full name.").optional(),

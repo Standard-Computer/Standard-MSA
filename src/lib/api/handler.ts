@@ -10,6 +10,7 @@
 import type { ApiKey } from "@prisma/client";
 import { ZodError } from "zod";
 import { prisma } from "@/lib/db";
+import { redactSecrets } from "@/lib/email/redact";
 import { clientIpFrom } from "@/lib/visits/visits";
 import { ApiError, validationError } from "./errors";
 import { authenticateApiKey, keyHasScope, type ApiScope } from "./keys";
@@ -123,7 +124,11 @@ export function apiHandler(
       if (apiErr.code === "internal_error") {
         // The caller gets the envelope; the operator's request log gets the
         // cause (the `error` column below). Nothing goes to stdout/stderr.
-        failureCause = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        // Redacted first: a provider error can quote a key or an accept-token
+        // URL back at us, and this column is durable.
+        failureCause = redactSecrets(
+          err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        );
       }
       result = { status: apiErr.status, body: apiErr.body(), headers: apiErr.headers };
     }
@@ -143,10 +148,17 @@ export function apiHandler(
         },
       });
       await prisma.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } });
-    } catch {
+    } catch (logErr) {
       // If the log write itself fails there is no durable channel left to
       // record that in, and the caller's already-handled response must not
-      // become a 500 over bookkeeping.
+      // become a 500 over bookkeeping. stderr is the one channel that cannot
+      // itself fail into this catch, so the failure is at least diagnosable
+      // from the container log (reviewer round-2, finding 3).
+      process.stderr.write(
+        `[api] request-log write failed: ${redactSecrets(
+          logErr instanceof Error ? `${logErr.name}: ${logErr.message}` : String(logErr),
+        )}\n`,
+      );
     }
 
     return jsonResponse(result, limitHeaders);
