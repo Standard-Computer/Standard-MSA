@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { enqueueSendEventWebhooks } from "@/lib/api/webhooks";
 import { prisma } from "@/lib/db";
 import { normalizeRecipientInput, type RecipientInput, type RecipientInputLike } from "./fields";
 import { advanceStatus, type SendEventType } from "./lifecycle";
@@ -83,6 +84,10 @@ export async function appendSendEvent(
   if (Object.keys(data).length > 0) {
     await db.send.update({ where: { id: sendId }, data });
   }
+
+  // Row writes only (SHA-2960): queue `send.<type>` for any webhook
+  // subscriptions; the network happens later in the delivery sweep.
+  await enqueueSendEventWebhooks(sendId, input.type, db);
 }
 
 /** RecipientInput -> column values ("" becomes NULL, which is what empty means). */
@@ -118,6 +123,23 @@ function mergeRecipient(
   };
 }
 
+/**
+ * Reuse-or-create the recipient for `input.email` with the non-destructive
+ * merge above. The one write path for Recipient — the send flow and the
+ * API's POST /contacts (SHA-2960) both come through here, so they cannot
+ * disagree about what a repeat email does.
+ */
+export async function upsertRecipient(input: RecipientInput, db: Db = prisma) {
+  const existing = await db.recipient.findFirst({
+    where: { email: input.email },
+    orderBy: { id: "asc" },
+  });
+  const merged = mergeRecipient(input, existing);
+  return existing
+    ? db.recipient.update({ where: { id: existing.id }, data: toRecipientRow(merged) })
+    : db.recipient.create({ data: toRecipientRow(merged) });
+}
+
 export type CreatedSend = {
   send: SendWithTrail;
   /** The recipient values as merged into this send. */
@@ -139,14 +161,8 @@ export async function createSend(
 ): Promise<CreatedSend> {
   const input = normalizeRecipientInput(raw);
   const sendId = await prisma.$transaction(async (tx) => {
-    const existing = await tx.recipient.findFirst({
-      where: { email: input.email },
-      orderBy: { id: "asc" },
-    });
-    const merged = mergeRecipient(input, existing);
-    const recipient = existing
-      ? await tx.recipient.update({ where: { id: existing.id }, data: toRecipientRow(merged) })
-      : await tx.recipient.create({ data: toRecipientRow(merged) });
+    const recipient = await upsertRecipient(input, tx);
+    const merged = normalizeRecipientInput(recipient);
 
     const send = await tx.send.create({
       data: {
