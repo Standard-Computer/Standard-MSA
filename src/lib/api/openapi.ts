@@ -9,6 +9,7 @@
 import { z, type ZodType } from "zod";
 import { API_SCOPES } from "./keys";
 import {
+  IDEMPOTENCY_KEY_MAX_LENGTH,
   ContactCreateSchema,
   ContactSchema,
   DocumentSchema,
@@ -63,7 +64,7 @@ const IDEMPOTENCY_HEADER = {
   name: "Idempotency-Key",
   in: "header",
   required: false,
-  schema: { type: "string", maxLength: 200 },
+  schema: { type: "string", maxLength: IDEMPOTENCY_KEY_MAX_LENGTH },
   description:
     "Retry-safe creates: the same key replays the first response instead of creating twice; the same key with a different body is a 409.",
 };
