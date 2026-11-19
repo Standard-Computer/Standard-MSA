@@ -275,6 +275,44 @@ test("same Idempotency-Key replays the first response; different body is 409", a
   assert.equal(await prisma.send.count({ where: { recipient: { email: "retry@mail.shadowpsa.com" } } }), 1);
 });
 
+test("only 2xx responses are stored for replay; an error never pins the key", async () => {
+  const { withIdempotency } = await import("../../src/lib/api/idempotency");
+  const keyRow = (await keys.createApiKey("idempotency unit", [])).record;
+  const run = (result: { status: number; body: unknown }) =>
+    withIdempotency(keyRow.id, "TEST /unit", "pin-1", { a: 1 }, async () => result);
+
+  // A 422 outcome must NOT be stored: the caller who fixes their request
+  // and retries the same key gets a fresh execution, not a pinned error.
+  const first = await run({ status: 422, body: { error: "bad" } });
+  assert.equal(first.status, 422);
+  assert.equal(await prisma.apiIdempotencyKey.count({ where: { apiKeyId: keyRow.id } }), 0);
+
+  const second = await run({ status: 201, body: { ok: true } });
+  assert.equal(second.status, 201);
+  assert.equal(second.replayed, false);
+
+  // The 2xx IS stored: the same key now replays the 201 instead of executing.
+  const third = await run({ status: 500, body: { never: "runs as fresh" } });
+  assert.equal(third.status, 201);
+  assert.equal(third.replayed, true);
+});
+
+test("an oversized Idempotency-Key is a typed 422, not a silent no-key create", async () => {
+  const res = await sendsRoute.POST(
+    request("POST", "/sends", {
+      body: { email: "oversized-key@mail.shadowpsa.com", deliver: false },
+      headers: { "Idempotency-Key": "k".repeat(201) },
+    }),
+  );
+  assert.equal(res.status, 422);
+  assert.equal((await json(res)).error.code, "validation_failed");
+  assert.equal(
+    await prisma.send.count({ where: { recipient: { email: "oversized-key@mail.shadowpsa.com" } } }),
+    0,
+    "the create must not run without the replay protection the caller asked for",
+  );
+});
+
 // ── deliver:false and validation ────────────────────────────────────────────
 
 test("deliver:false skips email entirely; a bad payload is a typed 422", async () => {

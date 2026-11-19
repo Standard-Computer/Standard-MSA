@@ -65,17 +65,21 @@ export async function revokeApiKey(id: number): Promise<boolean> {
 
 /** The scopes a key row grants. Empty stored list = every scope. */
 export function keyScopes(row: Pick<ApiKey, "scopesJson">): ApiScope[] {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(row.scopesJson);
-    if (Array.isArray(parsed)) {
-      const scopes = parsed.filter(isApiScope);
-      if (scopes.length > 0) return scopes;
-    }
+    parsed = JSON.parse(row.scopesJson);
   } catch {
-    // Fall through: an unreadable scope list grants everything rather than
-    // bricking the key — the column ships "[]" (= all) by default.
+    // An unreadable scope list grants NOTHING. The column ships "[]"
+    // (= all) by default, so an unparseable value here means tampering or
+    // a corrupt restore — and the wrong failure direction for corruption
+    // is widening a key's authority.
+    return [];
   }
-  return [...API_SCOPES];
+  if (!Array.isArray(parsed)) return [];
+  if (parsed.length === 0) return [...API_SCOPES];
+  // Unknown names drop silently (a key minted before a scope was retired
+  // keeps working); a list naming ONLY unknowns narrows to nothing.
+  return parsed.filter(isApiScope);
 }
 
 export function keyHasScope(row: Pick<ApiKey, "scopesJson">, scope: ApiScope): boolean {

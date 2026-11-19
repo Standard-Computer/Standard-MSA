@@ -39,7 +39,8 @@ visible in Settings → API.
   `email_not_configured` 409, `rate_limited` 429, `internal_error` 500.
 
 - **Idempotency**: POST creates accept an `Idempotency-Key` header
-  (≤200 chars, any unique string). Retrying with the same key within 24 h
+  (≤200 chars, any unique string; a longer key is a `validation_failed`
+  422, never silently ignored). Retrying with the same key within 24 h
   returns the first response verbatim with `Idempotency-Replayed: true`;
   the same key with a different body is a 409. Always send one from
   automation.
