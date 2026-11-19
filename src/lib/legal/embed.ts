@@ -67,7 +67,18 @@ export type EmbedTheme = "light" | "dark" | "auto";
 export const EMBED_THEMES: EmbedTheme[] = ["light", "dark", "auto"];
 
 export function asEmbedTheme(raw: string | null | undefined): EmbedTheme {
-  return EMBED_THEMES.includes(raw as EmbedTheme) ? (raw as EmbedTheme) : "light";
+  // A switch over literals rather than `includes() ? raw : "light"`: the
+  // return value is a FRESH literal, never the query-string value itself, so
+  // taint tracking (CodeQL js/reflected-xss) can see that nothing
+  // request-controlled flows onward. Same semantics, provable sanitizer.
+  switch (raw) {
+    case "dark":
+      return "dark";
+    case "auto":
+      return "auto";
+    default:
+      return "light";
+  }
 }
 
 // ── Origins ───────────────────────────────────────────────────────────
