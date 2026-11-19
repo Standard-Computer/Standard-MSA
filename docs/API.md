@@ -1,8 +1,8 @@
 # Standard-MSA API
 
 The integration surface for PSA and AI tools: create contacts, send MSAs,
-follow each send's lifecycle, publish document versions, read `/legal`
-visit stats, and subscribe webhooks.
+follow each send's lifecycle, author and publish document versions, read
+`/legal` visit stats, and subscribe webhooks.
 
 The machine-readable truth is the OpenAPI 3.1 spec your install serves at
 `GET /api/v1/openapi.json` — generated from the same zod schemas the
@@ -20,7 +20,8 @@ Authorization: Bearer smsa_…
 
 Keys are stored as SHA-256 hashes and shown once. Each key carries scopes
 (`contacts:read`, `contacts:write`, `sends:read`, `sends:write`,
-`documents:read`, `documents:publish`, `stats:read`, `webhooks:manage`); a
+`documents:read`, `documents:write`, `documents:publish`, `stats:read`,
+`webhooks:manage`); a
 key created with no scopes ticked has all of them. Revocation is immediate.
 Every authenticated request is logged per key (method, path, status, IP) —
 visible in Settings → API.
@@ -90,6 +91,44 @@ Notes on `POST /sends`:
   (`POST /documents/{slug}/versions/{version}/publish`, optionally with
   `{"sendUpdateNotices": true}` to notify holders of older versions —
   notices are opt-in per request, never automatic).
+
+## Authoring documents (SHA-3086)
+
+Documents and their versions can be authored over the API as well as on the
+`/documents` operator screen — same rules either way:
+
+```sh
+# 1. Create the document (an empty shell; slug is fixed at creation).
+curl -s -X POST -H "$AUTH" -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{"slug":"msa","title":"Master Service Agreement","kind":"msa"}' \
+  "$BASE/documents"
+# -> 201 { "slug": "msa", "title": "…", "kind": "msa", "currentVersion": null }
+
+# 2. Open its next DRAFT version with the contract body.
+curl -s -X POST -H "$AUTH" -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{"bodyMarkdown":"## Agreement\n\nBetween {{msp_name}} and {{client_legal_name}}…",
+       "variables":{"payment_terms_days":"30"},"changelog":"First draft"}' \
+  "$BASE/documents/msa/versions"
+# -> 201 { "document": …, "version": { "version": 1, "published": false, … } }
+
+# 3. Publish it (see below). Only then does it exist publicly.
+curl -s -X POST -H "$AUTH" "$BASE/documents/msa/versions/1/publish"
+```
+
+Rules the endpoints enforce (scope `documents:write`):
+
+- Bodies are Markdown with `{{variable}}` placeholders — MSP identity
+  tokens (`{{msp_name}}`, `{{venue}}`, …), recipient tokens
+  (`{{client_legal_name}}`, `{{signer_name}}`, …) filled per send, and
+  your own tokens defaulted via `variables`.
+- A document has at most **one open draft**; a second
+  `POST …/versions` while one is open is a `conflict` 409. Drafts are
+  invisible on `/legal`, in the embed and to sends until published.
+- Published versions are immutable; changes mean a new version. Version
+  numbers only count up.
+- A duplicate slug is a `conflict` 409.
 
 ## Webhooks
 
