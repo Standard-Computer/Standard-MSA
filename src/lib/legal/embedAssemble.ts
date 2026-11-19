@@ -39,7 +39,11 @@ export function mspValuesFrom(identity: {
   venue: string | null;
 } | null): MspValues {
   return {
-    mspName: identity?.name ?? "the Service Provider",
+    // `||`, not `??`: a skipped onboarding (SHA-2956) persists a row with
+    // name "" — an empty name must read as the generic fallback, never leak
+    // "[unset: msp_name]" into the public pages the way a missing row never
+    // did.
+    mspName: identity?.name || "the Service Provider",
     mspLegalName: identity?.legalName ?? null,
     mspAddress: identity?.address ?? null,
     mspOwnerName: identity?.ownerName ?? null,

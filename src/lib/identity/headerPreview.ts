@@ -9,15 +9,16 @@
 //     never an empty string — a header that reads "between  and the
 //     Customer" hides the gap; the blank shows it (variables.ts, "filled"
 //     fallback rationale).
-//   • Customer-side values render NEUTRAL GENERIC PROSE, verbatim from
-//     ShadowPSA's LEGAL_PUBLIC_GENERIC_TEXT ("Customer of Provider",
-//     "Customer address on file") — the preview has no recipient, so a
-//     bracketed customer blank would read as a form nobody is filling in
-//     (STA-9088).
-//   • The effective date reads "Date of acceptance" — both of the engine's
-//     date variables resolve per-send, at acceptance, and on a surface with
-//     no send neither has happened (Sean's "ANY date field" ruling, ported
-//     into LEGAL_PUBLIC_GENERIC_TEXT).
+//   • Customer-side values render NEUTRAL GENERIC PROSE, verbatim from THIS
+//     repo's renderer — GENERIC_PUBLIC in src/lib/legal/variables.ts ("the
+//     Client", "the Client's address of record") — because the preview's
+//     promise is "exactly what a generated document will say", and documents
+//     here render through that engine, not ShadowPSA's. (Follow-up SHA-3012
+//     review: export GENERIC_PUBLIC and derive these so they cannot drift.)
+//   • The effective date reads "the date of acceptance" — both of the
+//     engine's date variables resolve per-send, at acceptance, and on a
+//     surface with no send neither has happened (Sean's "ANY date field"
+//     ruling; GENERIC_PUBLIC's effective_date entry).
 //   • A d/b/a that adds nothing VANISHES rather than announcing itself —
 //     the trading name is shown only when it differs from the legal name
 //     (client_dba's empty-string posture).
@@ -46,20 +47,23 @@ const BLANKS = {
   venue: "[Venue]",
 } as const;
 
-/** Customer-side generic prose — verbatim from LEGAL_PUBLIC_GENERIC_TEXT. */
+/** Customer-side generic prose — verbatim from GENERIC_PUBLIC in
+ *  src/lib/legal/variables.ts (client_legal_name, client_address,
+ *  signer_name, effective_date), which is what a generated document
+ *  actually renders when these values are unresolved. */
 export const CUSTOMER_GENERIC = {
-  legalName: "Customer of Provider",
-  address: "Customer address on file",
-  signerName: "Authorized Customer Representative",
-  date: "Date of acceptance",
+  legalName: "the Client",
+  address: "the Client's address of record",
+  signerName: "the Client's authorized signatory",
+  date: "the date of acceptance",
 } as const;
 
 export type ContractHeaderPreview = {
-  /** "This Master Services Agreement … between X … and Customer of Provider …" */
+  /** "This Master Services Agreement … between X … and the Client …" */
   partiesBlock: string;
   /** "Governing law and venue: … the courts of Lonoke County, AR, USA." */
   venueLine: string;
-  /** "Effective date: Date of acceptance" — resolves per-send, never here. */
+  /** "Effective date: the date of acceptance" — resolves per-send, never here. */
   effectiveDateLine: string;
   /** "Signed for the Provider by …" */
   signatureLine: string;

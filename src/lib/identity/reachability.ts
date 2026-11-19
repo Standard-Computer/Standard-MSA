@@ -62,19 +62,66 @@ export function isPrivateAddress(address: string): boolean {
   const family = isIP(addr);
 
   if (family === 4) return ipv4IsPrivate(addr);
-  if (family === 6) {
-    // IPv4-mapped IPv6 ("::ffff:10.0.0.1") hides a v4 address.
-    const mapped = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return ipv4IsPrivate(mapped[1]);
-    if (addr === "::" || addr === "::1") return true;
-    if (addr.startsWith("fc") || addr.startsWith("fd")) return true; // ULA fc00::/7
-    if (addr.startsWith("fe8") || addr.startsWith("fe9") || addr.startsWith("fea") || addr.startsWith("feb")) {
-      return true; // link-local fe80::/10
-    }
-    return false;
-  }
+  if (family === 6) return ipv6IsPrivate(addr);
   // Not an IP literal at all — treat as unsafe; callers resolve first.
   return true;
+}
+
+/** Expand a valid IPv6 literal into its 8 16-bit groups. An embedded
+ *  dotted-quad tail ("::ffff:10.0.0.1") is folded into the last two groups
+ *  first, so dotted and hex spellings of the same address expand alike.
+ *  Returns null for anything that does not expand cleanly. */
+function ipv6Groups(addr: string): number[] | null {
+  let body = addr;
+  const lastColon = body.lastIndexOf(":");
+  const tail = lastColon === -1 ? "" : body.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    const octets = tail.split(".").map((o) => (/^\d{1,3}$/.test(o) ? Number(o) : NaN));
+    if (octets.length !== 4 || octets.some((o) => Number.isNaN(o) || o > 255)) return null;
+    const hi = ((octets[0] << 8) | octets[1]).toString(16);
+    const lo = ((octets[2] << 8) | octets[3]).toString(16);
+    body = `${body.slice(0, lastColon)}:${hi}:${lo}`;
+  }
+  const halves = body.split("::");
+  if (halves.length > 2) return null;
+  const parseGroups = (part: string): number[] | null => {
+    if (part === "") return [];
+    const out: number[] = [];
+    for (const g of part.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const left = parseGroups(halves[0]);
+  const right = halves.length === 2 ? parseGroups(halves[1]) : [];
+  if (left === null || right === null) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+  if (left.length + right.length > 7) return null;
+  return [...left, ...Array(8 - left.length - right.length).fill(0), ...right];
+}
+
+/** IPv6 check over the CANONICAL groups, not the string spelling. WHATWG URL
+ *  serializes IPv4-mapped hostnames in hex ("http://[::ffff:169.254.169.254]"
+ *  parses to hostname "[::ffff:a9fe:a9fe]"), and a hostile AAAA record can
+ *  answer in either spelling — a prefix/regex test on the literal text lets
+ *  the hex form through to the metadata endpoint. Every range that embeds a
+ *  v4 address (mapped, v4-compatible, NAT64, 6to4) defers to the v4 check. */
+function ipv6IsPrivate(addr: string): boolean {
+  const g = ipv6Groups(addr);
+  if (!g) return true; // unexpected shape — never treat as public
+  const embedded = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+  const zero = (from: number, to: number) => g.slice(from, to + 1).every((x) => x === 0);
+  if (zero(0, 5)) {
+    if (g[6] === 0 && (g[7] === 0 || g[7] === 1)) return true; // :: and ::1
+    return ipv4IsPrivate(embedded(g[6], g[7])); // v4-compatible ::a.b.c.d (deprecated)
+  }
+  if (zero(0, 4) && g[5] === 0xffff) return ipv4IsPrivate(embedded(g[6], g[7])); // v4-mapped ::ffff:0:0/96
+  if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 5)) return ipv4IsPrivate(embedded(g[6], g[7])); // NAT64 64:ff9b::/96
+  if (g[0] === 0x2002) return ipv4IsPrivate(embedded(g[1], g[2])); // 6to4 2002::/16
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // ULA fc00::/7
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
+  return false;
 }
 
 function ipv4IsPrivate(addr: string): boolean {

@@ -16,6 +16,23 @@ const MSP = mspValuesFrom({
   venue: "Nebraska",
 });
 
+test("a skipped-onboarding row (name '') renders like no row at all, never [unset: msp_name]", () => {
+  const skipped = mspValuesFrom({
+    name: "",
+    legalName: null,
+    address: null,
+    ownerName: null,
+    email: null,
+    website: null,
+    venue: null,
+  });
+  assert.equal(skipped.mspName, "the Service Provider");
+  assert.equal(mspValuesFrom(null).mspName, "the Service Provider");
+  const rendered = renderLegalBody("{{msp_name}} provides services.", "public", skipped);
+  assert.equal(rendered, "the Service Provider provides services.");
+  assert.ok(!rendered.includes("[unset:"));
+});
+
 const SETTINGS: ResolvedLegalSettings = {
   embedEnabled: true,
   embedOrigins: [],
