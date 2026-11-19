@@ -21,7 +21,12 @@ test(".env.example contains placeholders only", () => {
     if (!m) continue;
     const [, name, raw] = m;
     const value = raw.replace(/^"|"$/g, "");
-    if (["DATABASE_URL", "APP_BASE_URL", "SMTP_PORT", "SMTP_SECURE"].includes(name)) continue;
+    // Non-secret structural defaults (paths, ports, flags, limits) may ship
+    // with a value; anything resembling a credential must be empty.
+    if (
+      ["DATABASE_URL", "APP_BASE_URL", "SMTP_PORT", "SMTP_SECURE", "API_RATE_LIMIT_PER_MINUTE"].includes(name)
+    )
+      continue;
     assert.equal(value, "", `${name} must ship empty in .env.example`);
   }
 });

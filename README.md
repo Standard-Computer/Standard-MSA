@@ -46,6 +46,10 @@ Open http://localhost:3000, sign in with that password, and the onboarding
 wizard takes it from there. Data lives in a SQLite file on a Docker volume;
 back up by copying the file.
 
+The full operator guide — email providers, scheduled jobs, upgrades,
+backups, visitor-data retention and your privacy obligations — is
+[`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md).
+
 ### Development
 
 ```sh
@@ -71,7 +75,8 @@ prisma/           schema + migrations (SQLite default; add-only changes)
 src/app/          Next.js App Router — public /legal, signing pages, operator UI, API
 src/lib/          domain modules: identity, legal, email, sends, visits, api
 docs/             ARCHITECTURE.md (data model, module boundaries),
-                  PORT-ASSESSMENT.md (what was ported from where)
+                  PORT-ASSESSMENT.md (what was ported from where),
+                  SELF-HOSTING.md (operator guide), API.md (integration API)
 tests/            node:test suites, one directory per module
 ```
 
@@ -144,6 +149,18 @@ Wire the schedule with any cron (every 5–15 minutes):
 Set `CRON_SECRET` in the environment. The same tick runs the visitor-log
 retention purge. (`?secret=` is accepted too, but the header form keeps the
 secret out of proxy logs.)
+
+## The API
+
+PSA and AI tools integrate through `/api/v1`: create contacts, create MSA
+sends (an email address alone is enough; the response carries the unique
+per-recipient `documentUrl`), follow each send's lifecycle, publish document
+versions, read `/legal` visit stats, and subscribe HMAC-signed webhooks for
+opened/accepted without polling. API keys are created in Settings → API —
+none ship with the product — scoped per integration, hashed at rest, and
+logged per request. The OpenAPI 3.1 spec is served at
+`/api/v1/openapi.json`; conventions and the webhook contract are in
+[`docs/API.md`](docs/API.md).
 
 ## Status
 
