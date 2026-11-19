@@ -17,8 +17,11 @@ test("escapes text content", () => {
 
 test("raw HTML in a body is dropped, not rendered", () => {
   const html = markdownToEmbedHtml('before\n\n<script>alert(1)</script>\n\n<img src="https://evil.example/pixel.png">\n\nafter');
-  assert.doesNotMatch(html, /<script>/);
-  assert.doesNotMatch(html, /<img/);
+  // Substring asserts, not tag-shaped regexes: "<script" catches every
+  // variant a regex like /<script>/ would miss, and this is an assertion on
+  // renderer OUTPUT, not an HTML filter (CodeQL js/bad-tag-filter).
+  assert.ok(!html.includes("<script"), "no script tag may be emitted");
+  assert.ok(!html.includes("<img"), "no img tag may be emitted");
   assert.match(html, /before/);
   assert.match(html, /after/);
 });
@@ -41,7 +44,7 @@ test("scheme smuggling via control characters never yields an executable scheme"
 
 test("images are omitted with a visible marker (no third-party request)", () => {
   const html = markdownToEmbedHtml("![diagram](https://evil.example/track.png)");
-  assert.doesNotMatch(html, /<img/);
+  assert.ok(!html.includes("<img"), "no img tag may be emitted");
   assert.match(html, /image omitted: diagram/);
 });
 
