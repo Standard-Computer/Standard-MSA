@@ -29,7 +29,7 @@ const modules = [
     title: "MSA sends",
     body: "Unique per-recipient MSAs with full lifecycle tracking and acceptance evidence.",
     lane: "SHA-2959",
-    href: null,
+    href: "/sends",
   },
   {
     title: "API",

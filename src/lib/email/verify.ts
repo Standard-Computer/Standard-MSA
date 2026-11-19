@@ -1,15 +1,14 @@
 // "Send test email" / verify-configuration (SHA-2958): proves the configured
 // provider actually works before the MSP relies on it.
 
+import { isEmailShape } from "./address";
 import { getEmailConfig } from "./config";
 import { getProvider } from "./registry";
 import { sendEmail } from "./send";
 import type { SendEmailResult } from "./types";
 
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export async function sendTestEmail(to: string): Promise<SendEmailResult> {
-  if (!EMAIL_SHAPE.test(to)) {
+  if (!isEmailShape(to)) {
     return { ok: false, error: `"${to}" is not a valid email address.` };
   }
   const state = await getEmailConfig();
