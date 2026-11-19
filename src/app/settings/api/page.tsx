@@ -5,6 +5,7 @@
 import { keyScopes } from "@/lib/api/keys";
 import { webhookEvents } from "@/lib/api/serializers";
 import { prisma } from "@/lib/db";
+import { requireOperator } from "@/lib/auth/page";
 import { revokeApiKeyAction } from "./actions";
 import CreateKeyForm from "./CreateKeyForm";
 
@@ -15,6 +16,7 @@ export default async function ApiSettingsPage({
 }: {
   searchParams: Promise<{ ok?: string; msg?: string }>;
 }) {
+  await requireOperator("/settings/api");
   const { ok, msg } = await searchParams;
   const keys = await prisma.apiKey.findMany({
     orderBy: { id: "asc" },
