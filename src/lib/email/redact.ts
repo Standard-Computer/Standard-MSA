@@ -2,11 +2,13 @@
 // that could carry provider output goes through here, so a key value can
 // never leak into the delivery log, the UI, or a thrown message.
 
+// SMTP_USERNAME is deliberately absent: it is not a secret, and common
+// values ("apikey" for SendGrid, "postmaster") would shred the very
+// diagnostics the delivery log exists to keep.
 const SECRET_ENV_VARS = [
   "SMTP2GO_API_KEY",
   "SENDGRID_API_KEY",
   "SMTP_PASSWORD",
-  "SMTP_USERNAME",
   "EMAIL_WEBHOOK_SECRET",
   "CRON_SECRET",
 ] as const;

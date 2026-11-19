@@ -1,8 +1,9 @@
 // Open/click tracking instrumentation (SHA-2958) — the C5 hooks.
 //
 // Click wrapping stores the real targets on the outbound row and rewrites
-// links to /api/email/click/<outboundId>/<index>. The click route can only
-// redirect to a stored target, so there is no open-redirect surface.
+// links to /api/email/click/<outboundId>/<index>. The click route redirects
+// only to a stored target and enforces absolute http(s) URLs, so a caller
+// passing an arbitrary trackLinks value cannot create an open redirect.
 
 export function clickUrl(baseUrl: string, outboundId: string, index: number): string {
   return `${baseUrl}/api/email/click/${outboundId}/${index}`;

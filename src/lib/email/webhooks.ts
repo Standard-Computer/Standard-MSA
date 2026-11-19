@@ -69,6 +69,22 @@ async function recordEvent(event: DeliveryEvent): Promise<boolean> {
       : null;
   if (!outbound) return false; // signal for a message we did not send — drop
 
+  // Replay dedup: providers retry webhooks on timeout, so an exact duplicate
+  // (same outbound, type and provider-supplied occurredAt) is acknowledged
+  // but not re-recorded — it would inflate open/click counts and re-stamp a
+  // terminal status onto a row that was legitimately re-sent since.
+  if (event.occurredAt) {
+    const duplicate = await prisma.emailDeliveryEvent.findFirst({
+      where: {
+        outboundId: outbound.id,
+        type: event.type,
+        source: "webhook",
+        occurredAt: event.occurredAt,
+      },
+    });
+    if (duplicate) return false;
+  }
+
   await prisma.emailDeliveryEvent.create({
     data: {
       outboundId: outbound.id,

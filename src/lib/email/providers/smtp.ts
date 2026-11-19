@@ -24,15 +24,19 @@ export const smtpProvider: EmailProvider = {
     if (!config.smtp.host) {
       return { ok: false, error: "SMTP selected but SMTP_HOST is not set.", permanent: true };
     }
-    const transport = nodemailer.createTransport({
-      host: config.smtp.host,
-      port: config.smtp.port,
-      secure: config.smtp.secure,
-      ...(config.smtp.username
-        ? { auth: { user: config.smtp.username, pass: config.secrets.smtpPassword ?? "" } }
-        : {}),
-    });
+    // Created inside the try: EmailProvider.send never throws, and a
+    // createTransport error must go through redactSecrets like every other
+    // path (the config it receives carries the SMTP password).
+    let transport: ReturnType<typeof nodemailer.createTransport> | undefined;
     try {
+      transport = nodemailer.createTransport({
+        host: config.smtp.host,
+        port: config.smtp.port,
+        secure: config.smtp.secure,
+        ...(config.smtp.username
+          ? { auth: { user: config.smtp.username, pass: config.secrets.smtpPassword ?? "" } }
+          : {}),
+      });
       const info = await transport.sendMail({
         from: payload.from,
         to: payload.to,
@@ -52,7 +56,7 @@ export const smtpProvider: EmailProvider = {
         permanent: typeof code === "number" && code >= 500,
       };
     } finally {
-      transport.close();
+      transport?.close();
     }
   },
 };

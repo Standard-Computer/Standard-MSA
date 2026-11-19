@@ -1,5 +1,7 @@
-// Click-wrapped link redirect (SHA-2958). Targets come ONLY from the stored
-// per-send link list, so this can never be used as an open redirect.
+// Click-wrapped link redirect (SHA-2958). Targets come from the stored
+// per-send link list, AND the route enforces absolute http(s) URLs below —
+// trackLinks is a public field on EmailMessage, so the no-open-redirect
+// guarantee must hold here, not in the callers.
 
 import { prisma } from "@/lib/db";
 
@@ -21,6 +23,18 @@ export async function GET(
   }
   const target = links[n];
   if (typeof target !== "string") {
+    return new Response("Not found", { status: 404 });
+  }
+  // Only absolute http(s) targets are redirectable: a javascript:/data:
+  // scheme must never reach a Location header, and a relative target would
+  // make Response.redirect throw a 500 at the recipient.
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return new Response("Not found", { status: 404 });
   }
   await prisma.emailDeliveryEvent.create({
