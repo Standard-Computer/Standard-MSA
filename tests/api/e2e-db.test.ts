@@ -385,7 +385,10 @@ test("webhook URL vetting at create; revoke voids its queue", async () => {
     dialled.push(url);
     return { ok: true, statusCode: 200, error: null };
   });
-  assert.ok(!dialled.includes("https://other.example.com/hook"), "revoked hook was dialled");
+  // Exact equality on whole URLs (CodeQL js/incomplete-url-substring-
+  // sanitization misreads Array.includes here as substring matching).
+  const revokedDials = dialled.filter((u) => u === "https://other.example.com/hook");
+  assert.equal(revokedDials.length, 0, "revoked hook was dialled");
   const voided = await prisma.webhookDelivery.findMany({ where: { webhookId: created.id } });
   assert.ok(voided.length >= 1);
   assert.ok(voided.every((d) => d.status === "exhausted" && d.lastError === "webhook revoked"));
