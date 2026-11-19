@@ -4,6 +4,7 @@ import { getEmailConfig } from "@/lib/email/config";
 import { publishedDocuments } from "@/lib/legal/documents";
 import { SendForm, type SendFormDocument } from "@/components/sends/SendForm";
 import { createAndSendAction } from "../actions";
+import { requireOperator } from "@/lib/auth/page";
 
 // Operator screen: send a unique MSA to one recipient (SHA-2959).
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ export default async function NewSendPage({
   searchParams: Promise<{ ok?: string; msg?: string }>;
 }) {
   const { ok, msg } = await searchParams;
+  await requireOperator("/sends/new");
   const [published, emailState] = await Promise.all([publishedDocuments(), getEmailConfig()]);
 
   const documents: SendFormDocument[] = published.map((p) => ({

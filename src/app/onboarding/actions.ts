@@ -13,6 +13,12 @@ import {
 import { saveIdentity, skipOnboarding } from "@/lib/identity/identity";
 import type { IdentityChange } from "@/lib/identity/diff";
 import { probeWebsite } from "@/lib/identity/reachability";
+import { requireOperator } from "@/lib/auth/page";
+
+// AUTH (SHA-3047): every action here calls requireOperator() first. A server
+// action is a POST endpoint on its page's path, so gating the screen alone
+// would leave the write reachable by anyone who can derive an action id —
+// and this repo is public, so that build is reproducible.
 
 export type SaveIdentityResult =
   | { ok: true; changes: IdentityChange[] }
@@ -32,6 +38,7 @@ export async function saveIdentityAction(
   input: MspIdentityInput,
   options: { acceptUnreachableWebsite?: boolean } = {},
 ): Promise<SaveIdentityResult> {
+  await requireOperator("/onboarding");
   const next = normalizeIdentityInput(input);
 
   const errors = validateIdentityInput(next);
@@ -53,6 +60,7 @@ export async function saveIdentityAction(
 }
 
 export async function skipOnboardingAction(): Promise<{ ok: true }> {
+  await requireOperator("/onboarding");
   await skipOnboarding();
   return { ok: true };
 }

@@ -125,11 +125,27 @@ SHA-2956; other lanes add routes, not nav edits.
 ## Request surfaces
 
 - **Public, no auth:** `/legal`, `/legal/[slug]` (+version/history/compare/
-  pdf), `/legal/embed.js`, `/legal/embed/frame`, `/a/[token]` signing pages.
-  Public pages render variables in `public` mode only.
+  pdf), `/legal/embed.js`, `/legal/embed/frame`, `/msa/[token]` signing
+  pages, and `/login`. Public pages render variables in `public` mode only.
 - **Operator UI:** everything else — single-operator model at v0 (the MSP),
-  auth story kept minimal; hardening is explicitly on the roadmap, not
-  blocking lanes.
+  gated server-side on a session cookie derived from one
+  `OPERATOR_PASSWORD` (`src/lib/auth/**`, SHA-3047). Every operator page,
+  route handler and server action calls the guard as its first statement.
+  Nothing in the gate is a client-side redirect: a redirect that has already
+  shipped the HTML has already shipped the send token.
+
+  This supersedes the earlier note here that the auth story was "kept
+  minimal; hardening is explicitly on the roadmap, not blocking lanes". It
+  contradicted `PORT-ASSESSMENT.md` § Auth ("before the operator screens
+  ship"), and PORT-ASSESSMENT was right — the screens had already shipped:
+  `/sends/[id]` rendered the accept token and `/sends/[id]/evidence`
+  returned recipient email, address, phone, IP and user agent, both off a
+  sequential integer id on an unauthenticated path. Sean ordered the fix on
+  2026-11-18 (SHA-3047), which settles the question: **this split is
+  load-bearing, not aspirational.** `src/lib/auth/surfaces.ts` is the
+  machine-readable copy of the list, and `tests/auth/coverage.test.ts` fails
+  the build when a route under `src/app` is unclassified or an operator
+  route forgets the guard. Adding a route means classifying it there.
 - **Cron:** `GET /api/cron/*` guarded by `CRON_SECRET` (liveness checks,
   send sweeps, notice sweeps). Self-host scheduling via container cron or
   host crontab; compose ships a sensible default.
