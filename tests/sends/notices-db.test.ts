@@ -207,6 +207,90 @@ test("noticedRecipientIds reads the delivery log, and is empty before anything i
   );
 });
 
+test("a notice that crashed mid-fan-out re-reaches only the recipient it never mailed", async () => {
+  // The case `noticedRecipientIds` chose the delivery log FOR: the notice row
+  // records the operator's decision and is written before any mail goes out,
+  // so a crash halfway through leaves a row naming people who were never
+  // mailed. Reading `recipientIdsJson` would treat those people as told and
+  // exclude them forever; reading the log tells the truth about what exists.
+  //
+  // Reconstructed by hand rather than by killing a process: one notice row
+  // naming two recipients, `sentAt` still null, and an outbound row for only
+  // the first of them — exactly the rows a crash between the two sends leaves.
+  const doc = await prisma.legalDocument.create({
+    data: { slug: "dpa", title: "Data Processing Addendum", kind: "dpa" },
+  });
+  const old = await prisma.legalDocumentVersion.create({
+    data: {
+      documentId: doc.id,
+      version: 1,
+      bodyMarkdown: "## 1. Processing\n\nOld.",
+      publishedAt: new Date("2026-10-01T00:00:00Z"),
+    },
+  });
+  const current = await prisma.legalDocumentVersion.create({
+    data: {
+      documentId: doc.id,
+      version: 2,
+      bodyMarkdown: "## 1. Processing\n\nNew.",
+      publishedAt: new Date("2026-11-03T00:00:00Z"),
+    },
+  });
+  const mailed = await sends.createSend(old.id, { email: "mailed@mail.shadowpsa.com" });
+  const stranded = await sends.createSend(old.id, { email: "stranded@mail.shadowpsa.com" });
+
+  const interrupted = await prisma.updateNotice.create({
+    data: {
+      documentVersionId: current.id,
+      audience: "all",
+      recipientIdsJson: JSON.stringify([mailed.send.recipientId, stranded.send.recipientId]),
+      // sentAt deliberately left null: the fan-out never finished.
+    },
+  });
+  await prisma.emailOutbound.create({
+    data: {
+      toAddress: "mailed@mail.shadowpsa.com",
+      subject: "Data Processing Addendum has been updated",
+      bodyText: "...",
+      kind: "notice",
+      refJson: JSON.stringify({
+        updateNoticeId: interrupted.id,
+        recipientId: mailed.send.recipientId,
+      }),
+      status: "sent",
+    },
+  });
+
+  // The decision named two people; only one of them has mail that exists.
+  const notified = await notices.noticedRecipientIds(current.id);
+  assert.deepEqual(
+    [...notified],
+    [mailed.send.recipientId],
+    "only the recipient with an outbound row counts as told",
+  );
+  assert.equal(
+    notified.has(stranded.send.recipientId),
+    false,
+    "the recipient the crash skipped is not written off as notified",
+  );
+
+  // And the repair actually happens: re-sending reaches exactly that person.
+  const repair = await notices.sendUpdateNotice({ documentId: doc.id, audience: "all" });
+  assert.ok(repair.ok, "the stranded recipient makes this a real notice, not a refused repeat");
+  assert.equal(repair.skipped, 1, "the already-mailed recipient is reported as skipped");
+  assert.deepEqual(
+    repair.failures.map((f) => f.email),
+    ["stranded@mail.shadowpsa.com"],
+    "exactly one person attempted, and it is the one the crash missed",
+  );
+  assert.equal(await noticeMailFor(stranded.send.recipientId), 1, "reached once");
+  assert.equal(
+    await noticeMailFor(mailed.send.recipientId),
+    1,
+    "and the one already mailed is not told twice",
+  );
+});
+
 test("an audience that selects nobody is refused without writing a notice", async () => {
   const before = await prisma.updateNotice.count();
   const result = await notices.sendUpdateNotice({
