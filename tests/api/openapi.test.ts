@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { buildOpenApiDocument } from "../../src/lib/api/openapi";
+import { IDEMPOTENCY_KEY_MAX_LENGTH } from "../../src/lib/api/schemas";
 
 const doc = buildOpenApiDocument("https://msa.example.com") as {
   openapi: string;
@@ -101,4 +102,11 @@ test("spec paths and route files pin each other, both directions", () => {
     if (file.includes("openapi.json")) continue;
     assert.ok(specFiles.has(file), `route file ${file} is not documented in the OpenAPI spec`);
   }
+});
+
+test("the published Idempotency-Key maxLength is the enforced limit, not a copy", () => {
+  const params = (doc.paths["/sends"].post as { parameters?: { name: string; schema?: { maxLength?: number } }[] }).parameters ?? [];
+  const header = params.find((p) => p.name === "Idempotency-Key");
+  assert.ok(header, "POST /sends documents the Idempotency-Key header");
+  assert.equal(header!.schema?.maxLength, IDEMPOTENCY_KEY_MAX_LENGTH);
 });

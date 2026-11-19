@@ -488,6 +488,59 @@ test("an internal error's cause lands in the request log, not on the console", a
   assert.equal(denied.status, 401);
 });
 
+test("a persisted internal-error cause is redacted, like every other durable error path", async () => {
+  const handlerMod = await import("../../src/lib/api/handler");
+  const leakKey = await keys.createApiKey("leak", ["contacts:read"]);
+  const route = handlerMod.apiHandler(
+    { scope: "contacts:read", endpoint: "GET /leak" },
+    async () => {
+      // A provider error that quotes a key shape and an accept-token link
+      // back at us — both must be gone before the row is written.
+      throw new Error(
+        `rejected: SG.${"A".repeat(20)}.${"B".repeat(20)} while mailing https://msa.example.com/msa/${"C".repeat(30)}`,
+      );
+    },
+  );
+  const res = await route(request("GET", "/leak", { key: leakKey.plaintext }));
+  assert.equal(res.status, 500);
+  const rows = await prisma.apiRequestLog.findMany({ where: { apiKey: { name: "leak" } } });
+  assert.equal(rows.length, 1);
+  const stored = rows[0].error ?? "";
+  assert.ok(!stored.includes("SG.AAAA"), "provider key shape must be redacted");
+  assert.ok(!stored.includes("/msa/CCCC"), "accept-token path must be masked");
+  assert.ok(stored.includes("[redacted]"), "redaction marker present");
+  assert.ok(stored.includes("rejected:"), "the diagnostic shape survives redaction");
+});
+
+test("a failed request-log write is reported on stderr, never silently dropped", async () => {
+  const handlerMod = await import("../../src/lib/api/handler");
+  const doomedKey = await keys.createApiKey("doomed", ["contacts:read"]);
+  const route = handlerMod.apiHandler(
+    { scope: "contacts:read", endpoint: "GET /doomed" },
+    async () => {
+      // Deleting the key mid-request makes the log write itself fail for
+      // real (FK RESTRICT) — no stubbing of the prisma proxy needed.
+      await prisma.apiKey.delete({ where: { id: doomedKey.record.id } });
+      return { status: 200, body: { ok: true } };
+    },
+  );
+  const realWrite = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const res = await route(request("GET", "/doomed", { key: doomedKey.plaintext }));
+    // Bookkeeping failure must not turn the handled response into a 500…
+    assert.equal(res.status, 200);
+  } finally {
+    process.stderr.write = realWrite;
+  }
+  // …but it must be diagnosable.
+  assert.match(captured, /request-log write failed/);
+});
+
 test("openapi.json serves the spec for this instance, unauthenticated", async () => {
   const res = await openapiRoute.GET(new Request(`${BASE}/openapi.json`));
   assert.equal(res.status, 200);
