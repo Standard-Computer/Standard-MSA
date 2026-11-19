@@ -10,7 +10,9 @@
 import type { LegalDocumentVersion } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getEmailConfig } from "@/lib/email/config";
+import { refNumber } from "@/lib/email/ref";
 import { sendEmail } from "@/lib/email/send";
+import { serializeByKey } from "@/lib/serialize";
 import { diffHunks, diffLines, summarizeDiff, type DiffSummary } from "@/lib/legal/diff";
 import { publishedDocuments } from "@/lib/legal/documents";
 import { escapeHtml } from "@/lib/legal/html";
@@ -161,17 +163,71 @@ export function composeNoticeEmail(input: {
   return { subject, text, html };
 }
 
+// ── Who has already been told ───────────────────────────────────────────────
+
+/**
+ * Recipients already mailed a notice about this exact document version.
+ *
+ * Read from the DELIVERY LOG rather than from `UpdateNotice.recipientIdsJson`.
+ * The notice row records what an operator DECIDED, and it is written before
+ * the fan-out starts — so a crash halfway through would leave never-mailed
+ * recipients listed there and exclude them permanently. An EmailOutbound row
+ * means the mail exists: either it went, or it is in the queue with its own
+ * retries and backoff. In both cases mailing again is a duplicate, not a
+ * repair.
+ */
+export async function noticedRecipientIds(documentVersionId: number): Promise<Set<number>> {
+  const priorNotices = await prisma.updateNotice.findMany({
+    where: { documentVersionId },
+    select: { id: true },
+  });
+  const notified = new Set<number>();
+  if (priorNotices.length === 0) return notified;
+  const noticeIds = new Set(priorNotices.map((n) => n.id));
+
+  const outbounds = await prisma.emailOutbound.findMany({
+    where: { kind: NOTICE_EMAIL_KIND },
+    select: { refJson: true },
+  });
+  for (const outbound of outbounds) {
+    const noticeId = refNumber(outbound.refJson, "updateNoticeId");
+    if (noticeId === null || !noticeIds.has(noticeId)) continue;
+    const recipientId = refNumber(outbound.refJson, "recipientId");
+    if (recipientId !== null) notified.add(recipientId);
+  }
+  return notified;
+}
+
 export type NoticeSendResult =
   | {
       ok: true;
       noticeId: number;
       notified: number;
+      /** Chosen, but already notified about this version, so not mailed again. */
+      skipped: number;
       failures: { email: string; error: string }[];
     }
   | { ok: false; error: string };
 
 /**
  * Mail an update notice to a chosen audience.
+ *
+ * EXACTLY ONCE per recipient per version. Sean's rule makes this a human
+ * decision, and a human decision arrives by double-clicked submit as often
+ * as not — so "never automatic" is only half the promise. The other half is
+ * that asking twice does not tell forty people twice that their terms
+ * changed, which is a mail nobody can un-send.
+ *
+ * Nothing in the schema enforces that (UpdateNotice has no unique key to
+ * add without a migration), so it is enforced here on two levels:
+ *
+ *  - Durably, against the delivery log: already-notified recipients are
+ *    dropped from the audience, and a notice whose audience is entirely
+ *    already-notified writes NO row and sends no mail. That is what makes a
+ *    second submit a no-op minutes or days later, and across a restart.
+ *  - Against the simultaneous double-click, which would otherwise have both
+ *    requests pass that check before either wrote: one critical section per
+ *    document version, so the second request reads the first one's rows.
  *
  * The UpdateNotice row is written BEFORE any mail goes out and `sentAt` is
  * stamped after, so a crash mid-fan-out leaves a record of what was decided
@@ -194,25 +250,50 @@ export async function sendUpdateNotice(input: {
     return { ok: false, error: "No prior recipients hold an older version of this document." };
   }
 
-  const recipientIds = resolveAudience(
+  const chosen = resolveAudience(
     input.audience,
     context.candidate.pool,
     input.selectedRecipientIds ?? [],
   );
-  if (recipientIds.length === 0) {
+  if (chosen.length === 0) {
     return { ok: false, error: "That audience selects nobody. Nothing was sent." };
+  }
+
+  return serializeByKey(`update-notice:${context.version.id}`, () =>
+    fanOut(input.audience, context, chosen, state.config.baseUrl),
+  );
+}
+
+async function fanOut(
+  audience: NoticeAudience,
+  context: NoticeContext,
+  chosen: readonly number[],
+  baseUrl: string,
+): Promise<NoticeSendResult> {
+  const already = await noticedRecipientIds(context.version.id);
+  const recipientIds = chosen.filter((id) => !already.has(id));
+  const skipped = chosen.length - recipientIds.length;
+  if (recipientIds.length === 0) {
+    // No row either: a notice that mails nobody is not a notice, and writing
+    // one per rejected double-click would make the ledger unreadable.
+    return {
+      ok: false,
+      error:
+        `Everyone in that audience has already been notified about v${context.version.version}. ` +
+        "Nothing was sent.",
+    };
   }
 
   const notice = await prisma.updateNotice.create({
     data: {
       documentVersionId: context.version.id,
-      audience: input.audience,
+      audience,
       recipientIdsJson: JSON.stringify(recipientIds),
     },
   });
 
   const identity = await prisma.mspIdentity.findFirst({ orderBy: { id: "asc" } });
-  const url = `${state.config.baseUrl}/legal/${context.candidate.slug}`;
+  const url = `${baseUrl}/legal/${context.candidate.slug}`;
   const failures: { email: string; error: string }[] = [];
   let notified = 0;
 
@@ -241,5 +322,5 @@ export async function sendUpdateNotice(input: {
   }
 
   await prisma.updateNotice.update({ where: { id: notice.id }, data: { sentAt: new Date() } });
-  return { ok: true, noticeId: notice.id, notified, failures };
+  return { ok: true, noticeId: notice.id, notified, skipped, failures };
 }

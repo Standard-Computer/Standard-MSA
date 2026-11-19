@@ -11,6 +11,8 @@
 // first delivery attempt failed and was retried by the queue hours later.
 
 import { prisma } from "@/lib/db";
+import { refNumber } from "@/lib/email/ref";
+import { serializeByKey } from "@/lib/serialize";
 import { SEND_EMAIL_KIND } from "./constants";
 import type { SendEventType } from "./lifecycle";
 import { appendSendEvent, type SendWithTrail } from "./sends";
@@ -35,26 +37,12 @@ const PROJECTED_TYPES: Record<string, SendEventType> = {
 
 /** `{"sendId":12}` -> 12. Anything else -> null. */
 export function refSendId(refJson: string): number | null {
-  try {
-    const parsed: unknown = JSON.parse(refJson);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const value = (parsed as { sendId?: unknown }).sendId;
-    return typeof value === "number" && Number.isInteger(value) ? value : null;
-  } catch {
-    return null;
-  }
+  return refNumber(refJson, "sendId");
 }
 
 /** The EmailDeliveryEvent id a projected SendEvent came from, if it was one. */
 export function projectedFrom(metaJson: string): number | null {
-  try {
-    const parsed: unknown = JSON.parse(metaJson);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const value = (parsed as { deliveryEventId?: unknown }).deliveryEventId;
-    return typeof value === "number" && Number.isInteger(value) ? value : null;
-  } catch {
-    return null;
-  }
+  return refNumber(metaJson, "deliveryEventId");
 }
 
 function metaRecord(json: string): Record<string, unknown> {
@@ -77,9 +65,21 @@ function metaRecord(json: string): Record<string, unknown> {
  * is the dedup key — not a timestamp or a type, both of which legitimately
  * repeat (a recipient opening the same email three times is three opens).
  *
+ * Idempotent across CONCURRENT calls too, which "check the trail, then
+ * insert" is not on its own: two operator tabs loading the same send at once
+ * both see an empty projection and both write it. There is no DB constraint
+ * to lean on (an append-only event log has no natural unique key) and adding
+ * one is a schema change, so the check and the writes share one critical
+ * section per send — and the dedup set is read from the database inside it
+ * rather than from the caller's snapshot.
+ *
  * Returns how many events it appended, so a caller can decide to re-read.
  */
 export async function projectDeliverySignals(send: SendWithTrail): Promise<number> {
+  return serializeByKey(`send-projection:${send.id}`, () => projectUnguarded(send));
+}
+
+async function projectUnguarded(send: SendWithTrail): Promise<number> {
   const outbounds = await prisma.emailOutbound.findMany({
     where: { toAddress: send.recipient.email, kind: SEND_EMAIL_KIND },
     include: { events: { orderBy: { occurredAt: "asc" } } },
@@ -87,8 +87,15 @@ export async function projectDeliverySignals(send: SendWithTrail): Promise<numbe
   const mine = outbounds.filter((o) => refSendId(o.refJson) === send.id);
   if (mine.length === 0) return 0;
 
+  // Re-read rather than trusting `send.events`: the operator screens hand us
+  // a send they loaded earlier in the request, and a snapshot taken before
+  // another request's projection committed would re-project all of it.
+  const trail = await prisma.sendEvent.findMany({
+    where: { sendId: send.id },
+    select: { metaJson: true },
+  });
   const alreadyProjected = new Set<number>();
-  for (const event of send.events) {
+  for (const event of trail) {
     const id = projectedFrom(event.metaJson);
     if (id !== null) alreadyProjected.add(id);
   }
