@@ -15,6 +15,7 @@ import { serializeByKey } from "@/lib/serialize";
 import { ApiError } from "./errors";
 
 export const IDEMPOTENCY_WINDOW_HOURS = 24;
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 
 export type StoredResponse = { status: number; body: unknown; replayed: boolean };
 
@@ -22,10 +23,31 @@ export function requestHash(body: unknown): string {
   return createHash("sha256").update(JSON.stringify(body ?? null), "utf8").digest("hex");
 }
 
-/** Valid Idempotency-Key header value, or null when absent/garbage. */
+/**
+ * Valid Idempotency-Key header value, or null when absent.
+ *
+ * An oversized key is a typed rejection, not a silent downgrade to "no
+ * key": on POST /sends — the call that mails a real recipient — a caller
+ * who believes they are replay-protected must never double-send because
+ * we quietly dropped their key. The spec pins maxLength 200.
+ */
 export function idempotencyKeyFrom(headers: Headers): string | null {
   const raw = headers.get("idempotency-key")?.trim() ?? "";
-  if (raw === "" || raw.length > 200) return null;
+  if (raw === "") return null;
+  if (raw.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+    throw new ApiError(
+      "validation_failed",
+      `Idempotency-Key must be at most ${IDEMPOTENCY_KEY_MAX_LENGTH} characters.`,
+      {
+        details: [
+          {
+            path: "Idempotency-Key",
+            message: `header is ${raw.length} characters; the maximum is ${IDEMPOTENCY_KEY_MAX_LENGTH}`,
+          },
+        ],
+      },
+    );
+  }
   return raw;
 }
 

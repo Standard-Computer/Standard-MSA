@@ -101,10 +101,14 @@ test("API key shape gate", () => {
   assert.equal(isApiKeyShape(42), false);
 });
 
-test("empty or unreadable scope lists grant everything; a subset restricts", () => {
+test("empty scope list grants everything; a subset restricts; corruption narrows to nothing", () => {
   assert.deepEqual(keyScopes({ scopesJson: "[]" }), [...API_SCOPES]);
-  assert.deepEqual(keyScopes({ scopesJson: "not json" }), [...API_SCOPES]);
   assert.deepEqual(keyScopes({ scopesJson: '["sends:write","bogus"]' }), ["sends:write"]);
+  // A corrupt row must fail CLOSED: unparseable or non-array scope data
+  // narrows the key to no scopes rather than widening it to all of them.
+  assert.deepEqual(keyScopes({ scopesJson: "not json" }), []);
+  assert.deepEqual(keyScopes({ scopesJson: '"contacts:read"' }), []);
+  assert.deepEqual(keyScopes({ scopesJson: '["bogus"]' }), []);
 });
 
 // ── Idempotency ─────────────────────────────────────────────────────────────
@@ -116,7 +120,13 @@ test("request hashing distinguishes bodies; header extraction bounds length", ()
 
   assert.equal(idempotencyKeyFrom(new Headers()), null);
   assert.equal(idempotencyKeyFrom(new Headers({ "Idempotency-Key": "  abc  " })), "abc");
-  assert.equal(idempotencyKeyFrom(new Headers({ "Idempotency-Key": "x".repeat(201) })), null);
+  assert.equal(idempotencyKeyFrom(new Headers({ "Idempotency-Key": "x".repeat(200) })), "x".repeat(200));
+  // Oversized is a typed rejection, never a silent downgrade to "no key":
+  // the caller sent a key, so they believe they are replay-protected.
+  assert.throws(
+    () => idempotencyKeyFrom(new Headers({ "Idempotency-Key": "x".repeat(201) })),
+    (err: unknown) => err instanceof ApiError && err.code === "validation_failed",
+  );
 });
 
 // ── Errors ──────────────────────────────────────────────────────────────────
