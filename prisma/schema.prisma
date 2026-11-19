@@ -32,8 +32,18 @@ model MspIdentity {
   ownerName  String? // owner / CEO, used as signatory
   email      String? // MSP notification address (liveness alerts etc.)
   website    String?
-  venue      String? // governing law / venue line
+  venue      String? // governing law / venue line, composed from the parts below
   logoUrl    String?
+  // SHA-2956: venue is collected as state/province + country and composed
+  // into `venue` on save. The parts are kept so re-running the wizard edits
+  // what the MSP actually typed, not a string we would have to parse apart.
+  venueState   String?
+  venueCountry String?
+  // SHA-2956 onboarding state. The wizard is skippable and re-runnable; a
+  // row with neither timestamp (or no row at all) sends the first visit to
+  // /onboarding. Completing clears skippedAt.
+  onboardingCompletedAt DateTime?
+  onboardingSkippedAt   DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
