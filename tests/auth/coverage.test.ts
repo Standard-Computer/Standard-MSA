@@ -18,6 +18,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { classifyPath, SURFACES, UNMATCHED } from "../../src/lib/auth/surfaces";
+import { declaresExport, splitActionExports } from "./_actionSplit";
 
 const APP_DIR = path.join(process.cwd(), "src", "app");
 
@@ -137,20 +138,32 @@ test("every server action under an operator route calls the guard", () => {
 
 test("each exported action in a guarded file guards itself", () => {
   // One guard at the top of the file protects one action, not its neighbours.
+  //
+  // The split understands every export form, not just `export async function`
+  // (SHA-3067) — see _actionSplit.ts for why that mattered. A file whose
+  // exports this matcher cannot recognise at all is reported here too, so a
+  // syntax nobody anticipated fails loudly instead of passing vacuously.
   const misses: string[] = [];
   for (const file of actionFiles()) {
     if (classifyPath(file.route).kind !== "operator") continue;
-    // Split on exported function declarations and check each body.
-    const parts = file.source.split(/^export async function /m).slice(1);
-    for (const part of parts) {
-      const name = part.slice(0, part.indexOf("(")).trim();
-      // The body runs to the next top-level close brace.
-      const end = part.indexOf("\n}");
-      const body = end === -1 ? part : part.slice(0, end);
-      if (!GUARD_CALL.test(body)) misses.push(`${name} (${file.file})`);
+    const actions = splitActionExports(file.source);
+    if (actions.length === 0) {
+      if (declaresExport(file.source)) {
+        misses.push(`<no exported action recognised> (${file.file})`);
+      }
+      continue;
+    }
+    for (const action of actions) {
+      if (!GUARD_CALL.test(action.body)) misses.push(`${action.name} (${file.file})`);
     }
   }
-  assert.deepEqual(misses, [], "each of these exported actions needs its own guard call");
+  assert.deepEqual(
+    misses,
+    [],
+    "each of these exported actions needs its own guard call; a " +
+      "<no exported action recognised> entry instead means tests/auth/_actionSplit.ts " +
+      "does not know the export syntax that file uses — widen the matcher",
+  );
 });
 
 test("no operator surface is served from a client component", () => {
