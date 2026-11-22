@@ -18,7 +18,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { classifyPath, SURFACES, UNMATCHED } from "../../src/lib/auth/surfaces";
-import { declaresExport, splitActionExports } from "./_actionSplit";
+import { findActionSites } from "./_actionSplit";
 
 const APP_DIR = path.join(process.cwd(), "src", "app");
 
@@ -136,21 +136,21 @@ test("every server action under an operator route calls the guard", () => {
   );
 });
 
-test("each exported action in a guarded file guards itself", () => {
+test("each server action in a guarded file guards itself", () => {
   // One guard at the top of the file protects one action, not its neighbours.
   //
-  // The split understands every export form, not just `export async function`
-  // (SHA-3067) — see _actionSplit.ts for why that mattered. A file whose
-  // exports this matcher cannot recognise at all is reported here too, so a
-  // syntax nobody anticipated fails loudly instead of passing vacuously.
+  // The split understands every declaration form, not just
+  // `export async function` (SHA-3067) — see _actionSplit.ts for why that
+  // mattered, and for why the unit is a function body rather than an exported
+  // symbol. A file that reaches this check and yields no recognised action is
+  // reported here too, so a form nobody anticipated fails loudly instead of
+  // passing vacuously.
   const misses: string[] = [];
   for (const file of actionFiles()) {
     if (classifyPath(file.route).kind !== "operator") continue;
-    const actions = splitActionExports(file.source);
+    const actions = findActionSites(file.source);
     if (actions.length === 0) {
-      if (declaresExport(file.source)) {
-        misses.push(`<no exported action recognised> (${file.file})`);
-      }
+      misses.push(`<no server action recognised> (${file.file})`);
       continue;
     }
     for (const action of actions) {
@@ -160,10 +160,32 @@ test("each exported action in a guarded file guards itself", () => {
   assert.deepEqual(
     misses,
     [],
-    "each of these exported actions needs its own guard call; a " +
-      "<no exported action recognised> entry instead means tests/auth/_actionSplit.ts " +
-      "does not know the export syntax that file uses — widen the matcher",
+    "each of these server actions needs its own guard call; a " +
+      "<no server action recognised> entry instead means this file carries a " +
+      '"use server" that tests/auth/_actionSplit.ts cannot resolve to any action — ' +
+      "widen the matcher, or drop the directive if the file declares no action",
   );
+});
+
+test("the per-action split resolves an action in every operator action file", () => {
+  // The companion to the vacuity rule above, asserted from the other side: a
+  // file is only *checked* if the matcher resolves sites in it, so count them.
+  // Under the original export-keyed matcher src/app/embed/page.tsx yielded
+  // zero sites and reported zero misses — green because it checked nothing,
+  // which is the failure mode this guardrail exists to rule out.
+  const counts = actionFiles()
+    .filter((f) => classifyPath(f.route).kind === "operator")
+    .map((f) => ({ file: f.file, sites: findActionSites(f.source).length }));
+  assert.ok(counts.length >= 7, `expected the operator action files, found ${counts.length}`);
+  assert.deepEqual(
+    counts.filter((c) => c.sites === 0).map((c) => c.file),
+    [],
+  );
+  // embed/page.tsx is the file the export-keyed matcher could not see: its
+  // only action is module-local with an inline directive and no exported name.
+  const embed = counts.find((c) => c.file.endsWith(path.join("embed", "page.tsx")));
+  assert.ok(embed !== undefined, "embed/page.tsx is in the operator action set");
+  assert.ok(embed.sites >= 1, "embed/page.tsx contributes a checked action site");
 });
 
 test("no operator surface is served from a client component", () => {
