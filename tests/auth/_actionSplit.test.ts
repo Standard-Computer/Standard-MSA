@@ -420,6 +420,23 @@ test("a re-export that could publish an action is reported by name", () => {
   assert.deepEqual(reported(named), ["probeAction"]);
 });
 
+test("an `export {}` list broken over several lines is still reported", () => {
+  // Prettier breaks a long name list, and an export clause is the one
+  // statement here whose names can span lines — so a one-line-at-a-time rule
+  // missed it silently, which is the exact failure mode it exists to stop.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+const purgeAction = async (): Promise<void> => {
+  await prisma.send.deleteMany();
+};
+
+export {
+  okAction,
+  purgeAction,
+};
+`;
+  assert.deepEqual(reported(source), ["purgeAction"]);
+});
+
 test("a dedented template literal does not truncate the body above the guard", () => {
   // This repo sends HTML mail from sends/notices/actions.ts and
   // settings/email/actions.ts, and a column-0 line inside the literal is a
