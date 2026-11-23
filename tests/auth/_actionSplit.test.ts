@@ -11,7 +11,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { findActionSites, hasModuleDirective } from "./_actionSplit";
+import {
+  findActionSites,
+  findUngradedExports,
+  hasModuleDirective,
+} from "./_actionSplit";
 
 /** The same guard matcher coverage.test.ts applies to each body. */
 const GUARD_CALL = /\b(requireOperator|guardOperatorRequest)\s*\(/;
@@ -26,6 +30,19 @@ function unguarded(source: string): string[] {
   return findActionSites(source)
     .filter((action) => !GUARD_CALL.test(action.body))
     .map((action) => action.name);
+}
+
+/**
+ * Everything coverage.test.ts would report for `source`, either way round.
+ *
+ * An unrecognised export is reported by findUngradedExports and a recognised
+ * but unguarded one by the body check, and which route a given syntax takes is
+ * an implementation detail — what the guardrail promises is that the name comes
+ * out. Asserting on the union is what makes these fixtures survive the matcher
+ * learning a form that is currently only loud.
+ */
+function reported(source: string): string[] {
+  return [...findUngradedExports(source), ...unguarded(source)].sort();
 }
 
 /** A file-level `"use server"` module: every export in it is an action. */
@@ -319,6 +336,175 @@ export async function loginAction(): Promise<void> {
 `;
   assert.deepEqual(names(source), ["loginAction"]);
   assert.deepEqual(unguarded(source), []);
+});
+
+/** A correctly guarded neighbour, which is what hides an unreported export. */
+const GUARDED_NEIGHBOUR = `export async function okAction(): Promise<void> {
+  await requireOperator("/sends");
+  await prisma.send.create({ data: {} });
+}
+`;
+
+test("an unguarded annotated arrow action is caught", () => {
+  // `export const purgeAction: ServerAction = async () => {…}`. The annotation
+  // sits between the name and the `=`, so clause C could not see the site at
+  // all: one checked site, zero misses, green. The repo already writes the
+  // shape for non-actions — `export const metadata: Metadata` in layout.tsx
+  // and login/page.tsx — so it is a question of when, not if.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+export const purgeAction: ServerAction = async (formData: FormData): Promise<void> => {
+  await prisma.send.deleteMany({ where: { id: Number(formData.get("id")) } });
+};
+`;
+  assert.deepEqual(reported(source), ["purgeAction"]);
+  assert.deepEqual(names(source), ["okAction", "purgeAction"]);
+});
+
+test("an annotated arrow action that does guard itself passes", () => {
+  // The other side of the test above: tolerating the annotation must not make
+  // every annotated binding a red.
+  const source = `${PREAMBLE}export const purgeAction: ServerAction = async (): Promise<void> => {
+  await requireOperator("/sends");
+  await prisma.send.deleteMany();
+};
+`;
+  assert.deepEqual(names(source), ["purgeAction"]);
+  assert.deepEqual(reported(source), []);
+});
+
+test("an unguarded action behind a higher-order wrapper is caught", () => {
+  // `export const purgeAction = withLogging(async () => {…})` is not a
+  // function *declaration* form, and is deliberately not chased with another
+  // SITE_PATTERN alternative. The per-export rule reports it, which is the
+  // arrangement that makes the form after this one loud too.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+export const purgeAction = withLogging(async (): Promise<void> => {
+  await prisma.send.deleteMany();
+});
+`;
+  assert.deepEqual(reported(source), ["purgeAction"]);
+});
+
+test("an unguarded action published by an `export {}` list is caught", () => {
+  // Same class: the declaration is module-local and unexported, so clause C
+  // grades nothing, and the export is a separate statement entirely.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+const purgeAction = async (): Promise<void> => {
+  await prisma.send.deleteMany();
+};
+
+export { purgeAction };
+`;
+  assert.deepEqual(reported(source), ["purgeAction"]);
+});
+
+test("an unguarded action behind a function-type annotation is caught", () => {
+  // `[^=]*` in ANNOTATION cannot cross the `=` of a `=>`, so this annotation is
+  // not rewritten and the site is not graded. It is still reported, by the
+  // per-export rule — the point of having both.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+export const purgeAction: (formData: FormData) => Promise<void> = async () => {
+  await prisma.send.deleteMany();
+};
+`;
+  assert.deepEqual(reported(source), ["purgeAction"]);
+});
+
+test("a re-export that could publish an action is reported by name", () => {
+  // `export * from` has no name to report, so it is reported as `*`; a named
+  // re-export names the local declaration somebody has to go and guard.
+  const starred = `${PREAMBLE}${GUARDED_NEIGHBOUR}\nexport * from "./_probe";\n`;
+  assert.deepEqual(reported(starred), ["*"]);
+
+  const named = `${PREAMBLE}${GUARDED_NEIGHBOUR}\nexport { probeAction } from "./_probe";\n`;
+  assert.deepEqual(reported(named), ["probeAction"]);
+});
+
+test("a dedented template literal does not truncate the body above the guard", () => {
+  // This repo sends HTML mail from sends/notices/actions.ts and
+  // settings/email/actions.ts, and a column-0 line inside the literal is a
+  // clause-C site at depth 0 — so the indentation bound ended the action
+  // before its guard call and reported correct code as unguarded.
+  const assignment = `${PREAMBLE}export async function sendMailAction(): Promise<void> {
+  const html = \`
+const tracker = (id) => id;
+\`;
+  await requireOperator("/sends");
+  await sendMail(html);
+}
+`;
+  assert.deepEqual(names(assignment), ["sendMailAction"]);
+  assert.deepEqual(reported(assignment), []);
+
+  const declaration = `${PREAMBLE}export async function sendMailAction(): Promise<void> {
+  const script = \`
+function onclick() {}
+\`;
+  await requireOperator("/sends");
+  await sendMail(script);
+}
+`;
+  assert.deepEqual(names(declaration), ["sendMailAction"]);
+  assert.deepEqual(reported(declaration), []);
+
+  // And skipping the literal must not swallow a real miss in the same action.
+  const unguardedMail = `${PREAMBLE}export async function sendMailAction(): Promise<void> {
+  const html = \`
+const tracker = (id) => id;
+\`;
+  await sendMail(html);
+}
+`;
+  assert.deepEqual(reported(unguardedMail), ["sendMailAction"]);
+});
+
+test("the non-action exports on main are not reported by the per-export rule", () => {
+  // The companion to "no non-action export becomes a phantom site": the
+  // loudness rule has to stay off the same four live shapes, plus the annotated
+  // object literal that motivated the annotation pass. A rule that false-reds
+  // is worse than no rule.
+  const source = `${PREAMBLE}export type LoginError = "unconfigured" | "invalid";
+
+export interface CreateKeyState {
+  readonly status: "idle" | "error";
+}
+
+export enum Phase {
+  Draft = "draft",
+}
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const metadata: Metadata = { title: "Sends" };
+export const TABS = ["sends", "documents"];
+export { type LoginError as PublicLoginError };
+
+${GUARDED_NEIGHBOUR}`;
+  assert.deepEqual(findUngradedExports(source), []);
+  assert.deepEqual(reported(source), []);
+});
+
+test("the per-export rule stays off files with no module directive", () => {
+  // embed/page.tsx: its `"use server"` is inline on one local function, so the
+  // exported page component is a render path and correctly not an action.
+  // Demanding a guard from it is a false red on a real file.
+  const source = `import { requireOperator } from "@/lib/auth/page";
+
+export const dynamic = "force-dynamic";
+
+async function saveSettings(formData: FormData) {
+  "use server";
+  await requireOperator("/embed");
+  await prisma.legalSettings.update({ data: { embedEnabled: true } });
+}
+
+export default async function EmbedAdminPage() {
+  await requireOperator("/embed");
+  return null;
+}
+`;
+  assert.equal(hasModuleDirective(source), false);
+  assert.deepEqual(findUngradedExports(source), []);
 });
 
 test("a `\"use server\"` file yielding no recognised action is vacuity", () => {
