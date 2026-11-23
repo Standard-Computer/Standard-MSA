@@ -198,8 +198,9 @@ export async function secondAction(): Promise<void> {
 });
 
 test("a guard in a trailing helper is not miscredited to the action above it", () => {
-  // Bodies end at the next declaration site, not at EOF, so a guard helper at
-  // the bottom of the file cannot launder the unguarded action above it.
+  // Bodies end at the next module-level declaration site, not at EOF, so a
+  // guard helper at the bottom of the file cannot launder the unguarded
+  // action above it. The depth bound keeps this true: both are at column 0.
   const source = `${PREAMBLE}export async function unguardedAction(): Promise<void> {
   await prisma.send.deleteMany();
 }
@@ -223,6 +224,76 @@ test("a body runs to the next site, not to the first close brace", () => {
 };
 `;
   assert.deepEqual(unguarded(source), []);
+});
+
+test("a local declaration before the guard call does not truncate the body", () => {
+  // Every local is a declaration site, because family C matches any
+  // parenthesised initialiser — `const n = (count ?? 0) + 1;` is one. Bounding
+  // a body on the merely-next site therefore ended the action at its own first
+  // local and credited the guard below it to that local, reporting six shapes
+  // of ordinary, correctly guarded code as unguarded. Indentation is the fix:
+  // a nested site is deeper than its action and cannot bound it.
+  const locals = [
+    "const n = (count ?? 0) + 1;",
+    "const base = (await requestBaseUrl()).toString();",
+    "const helper = async () => 1;",
+    "const fn = function () {};",
+    "const map = (x: number) => x;",
+    "function inner() {}",
+    'const s = "lit";',
+    "const { id } = await payload();",
+    "const arr = [1, 2];",
+  ];
+  for (const local of locals) {
+    const source = `${PREAMBLE}export async function fooAction(count: number): Promise<void> {
+  ${local}
+  await requireOperator("/sends");
+  await prisma.send.create({ data: {} });
+}
+`;
+    assert.deepEqual(names(source), ["fooAction"], local);
+    assert.deepEqual(unguarded(source), [], local);
+  }
+});
+
+test("a nested inline-directive action does not make its encloser an action", () => {
+  // The companion to the depth bound. Widening the body so a nested
+  // declaration cannot end it also puts the nested action's `"use server"`
+  // inside its encloser's span, which would grade the render path as an action
+  // again — the thing the inline-directive clause deliberately stopped doing.
+  // So the directive is read from the narrow span and the guard from the wide
+  // one: only `save` is an action here.
+  const source = `import { requireOperator } from "@/lib/auth/page";
+
+export default async function Page() {
+  const rows = await prisma.send.findMany();
+  async function save(formData: FormData) {
+    "use server";
+    await requireOperator("/sends");
+    await prisma.send.update({ where: { id: 1 }, data: {} });
+  }
+  return rows.length + Number(save !== undefined);
+}
+`;
+  assert.deepEqual(names(source), ["save"]);
+  assert.deepEqual(unguarded(source), []);
+});
+
+test("an unguarded nested inline-directive action is still caught", () => {
+  // The other side of the test above: scoping the directive to the narrow span
+  // must not make a nested action invisible, only its encloser ungraded.
+  const source = `import { prisma } from "@/lib/db";
+
+export default async function Page() {
+  const rows = await prisma.send.findMany();
+  async function purge(formData: FormData) {
+    "use server";
+    await prisma.send.deleteMany({});
+  }
+  return rows.length + Number(purge !== undefined);
+}
+`;
+  assert.deepEqual(unguarded(source), ["purge"]);
 });
 
 test("no non-action export in the repo becomes a phantom site", () => {
