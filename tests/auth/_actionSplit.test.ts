@@ -15,6 +15,7 @@ import {
   findActionSites,
   findUngradedExports,
   hasModuleDirective,
+  UNTERMINATED_TEMPLATE,
 } from "./_actionSplit";
 
 /** The same guard matcher coverage.test.ts applies to each body. */
@@ -473,6 +474,135 @@ const tracker = (id) => id;
 }
 `;
   assert.deepEqual(reported(unguardedMail), ["sendMailAction"]);
+});
+
+test("an unpaired backtick in a comment does not blind the split", () => {
+  // A backticked identifier wrapped across two comment lines leaves a lone
+  // backtick on a line. Two files on main are exactly this shape —
+  // src/lib/legal/embedDocument.ts:27 and src/lib/legal/embedRoutes.ts:11 —
+  // so it is ordinary writing here, not an exotic corner.
+  //
+  // Counted, that backtick flipped the scan into "template interior" for the
+  // rest of the file, and a dropped line yields no site *and* no export: the
+  // unguarded action below was invisible to both halves of the guardrail while
+  // the guarded neighbour above held the file-level test up. Green, on the
+  // card's original failure mode, reached through the lexer.
+  //
+  // Outside a literal a line that starts `//` is a comment, so its backticks
+  // are prose and are not counted.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+//     frame-ancestors\` (computed from a settings row) and a cache policy
+export async function purgeAction(): Promise<void> {
+  await prisma.send.deleteMany();
+}
+`;
+  assert.deepEqual(names(source), ["okAction", "purgeAction"]);
+  assert.deepEqual(reported(source), ["purgeAction"]);
+});
+
+test("a template-interior line starting with `//` still closes its literal", () => {
+  // The other side of that amendment, and why it is scoped to lines *outside* a
+  // literal. Inside one, a line beginning `//` is literal text — a
+  // protocol-relative URL in mail HTML — and may carry the closing backtick, so
+  // its backticks have to keep counting. Skipping them would leave every file
+  // with such a line permanently unterminated.
+  const source = `${PREAMBLE}export async function sendMailAction(): Promise<void> {
+  const html = \`
+//cdn.example.com/pixel.png\`;
+  await requireOperator("/sends");
+  await sendMail(html);
+}
+`;
+  assert.deepEqual(names(source), ["sendMailAction"]);
+  assert.deepEqual(reported(source), []);
+});
+
+test("an unpaired backtick outside a comment is reported, not silently dropped", () => {
+  // A backtick in a quoted string still desyncs the line-based count — an
+  // accepted limit, since a tokenizer is the wrong trade for a test helper. What
+  // is not accepted is failing quietly, so the desync is loud from both ends:
+  // the dropped export is named, and the file is named for ending mid-literal.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+const TICK = "\`";
+export async function purgeAction(): Promise<void> {
+  await prisma.send.deleteMany();
+}
+`;
+  assert.deepEqual(findUngradedExports(source), ["purgeAction", UNTERMINATED_TEMPLATE]);
+});
+
+test("a source that ends inside a template literal is reported as the file", () => {
+  // The end-of-source half of the same rule. There may be no export left to
+  // name — the desync swallows whatever follows it — so the file itself is what
+  // gets reported, which is enough for somebody to go and balance the backtick.
+  const unterminated = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+const html = \`<p>hello</p>
+export async function purgeAction(): Promise<void> {
+  await prisma.send.deleteMany();
+}
+`;
+  assert.deepEqual(findUngradedExports(unterminated), ["purgeAction", UNTERMINATED_TEMPLATE]);
+
+  // With nothing after the desync at all, the file is the whole report.
+  const nothingAfter = `${PREAMBLE}${GUARDED_NEIGHBOUR}\nconst html = \`<p>hello</p>\n`;
+  assert.deepEqual(findUngradedExports(nothingAfter), [UNTERMINATED_TEMPLATE]);
+});
+
+test("a plain-literal declarator does not silence its sibling", () => {
+  // One `export const` statement can bind more than one name, so the
+  // PLAIN_LITERAL skip has to be per declarator. Per *line* it was a second
+  // silent miss: `LIMIT`'s initialiser is a plain literal, so the whole line was
+  // skipped and took its sibling with it — and the sibling's own line is at
+  // depth 2, where the depth-0 loop never looks. One unguarded action, reported
+  // as nothing at all.
+  const source = `${PREAMBLE}${GUARDED_NEIGHBOUR}
+export const LIMIT = 1,
+  purgeAction = async (): Promise<void> => {
+    await prisma.send.deleteMany();
+  };
+`;
+  assert.deepEqual(reported(source), ["purgeAction"]);
+});
+
+test("multi-line and multi-declarator non-action exports stay quiet", () => {
+  // The false-red guard on the two changes above: joining a continuation line
+  // and splitting declarators must not start reporting the value exports the
+  // repo already writes. A rule that false-reds is worse than no rule.
+  const source = `${PREAMBLE}export const metadata: Metadata = {
+  title: "Sends",
+  description: "Operator sends",
+};
+
+export const TABS = [
+  "sends",
+  "documents",
+];
+
+export const dynamic = "force-dynamic",
+  revalidate = 0;
+
+${GUARDED_NEIGHBOUR}`;
+  assert.deepEqual(findUngradedExports(source), []);
+  assert.deepEqual(reported(source), []);
+});
+
+test("a template literal quoting an export does not false-red a graded action", () => {
+  // The cost of reporting dropped export lines, stated honestly: a *correctly
+  // paired* literal whose interior starts a line with `export` is reported too.
+  // Nothing on main does that — measured over all 131 .ts/.tsx files, zero
+  // depth-0 `export` lines sit inside a literal — and where the quoted name is
+  // a real action in the same file the graded check absorbs it, as here. The
+  // trade is deliberate: a false red gets looked at, a silent miss does not.
+  const source = `${PREAMBLE}export async function docsAction(): Promise<void> {
+  await requireOperator("/documents");
+  const sample = \`
+export async function docsAction() {}
+\`;
+  await render(sample);
+}
+`;
+  assert.deepEqual(names(source), ["docsAction"]);
+  assert.deepEqual(reported(source), []);
 });
 
 test("the non-action exports on main are not reported by the per-export rule", () => {

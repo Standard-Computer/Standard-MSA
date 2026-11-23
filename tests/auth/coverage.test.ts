@@ -154,8 +154,14 @@ test("each server action in a guarded file guards itself", () => {
     if (classifyPath(file.route).kind !== "operator") continue;
     const actions = findActionSites(file.source);
     const ungraded = findUngradedExports(file.source);
-    for (const name of ungraded) {
-      misses.push(`<export resolved to no action: ${name}> (${file.file})`);
+    for (const entry of ungraded) {
+      // The lexer-desync entries already describe themselves — there is no
+      // export name to quote, because the desync swallowed it.
+      misses.push(
+        entry.startsWith("<")
+          ? `${entry} (${file.file})`
+          : `<export resolved to no action: ${entry}> (${file.file})`,
+      );
     }
     // The per-file backstop still covers a directive with nothing exported at
     // all, where there is no export to name. It stays quiet when the per-export
@@ -174,7 +180,11 @@ test("each server action in a guarded file guards itself", () => {
       "<export resolved to no action> or <no server action recognised> entry " +
       'instead means this file carries a module-level "use server" with an ' +
       "export that tests/auth/_actionSplit.ts cannot resolve to an action — " +
-      "widen the matcher, or drop the directive if the file declares no action",
+      "widen the matcher, or drop the directive if the file declares no action. " +
+      "A <source ends inside a template literal> or <export skipped as " +
+      "template interior> entry means the line-based scan lost backtick parity, " +
+      "usually an unpaired backtick in a comment or string: balance it (or " +
+      "escape it) so the rest of the file is checked again",
   );
 });
 
