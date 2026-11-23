@@ -379,16 +379,22 @@ function exportedNames(text: string): string[] {
 export function findUngradedExports(source: string): readonly string[] {
   if (!hasModuleDirective(source)) return [];
   const graded = new Set(findActionSites(source).map((site) => site.name));
+  const lines = codeLines(source);
   const loud: string[] = [];
-  for (const line of codeLines(source)) {
-    if (line.depth !== 0) continue;
-    if (
-      EXPORTED_BINDING.test(line.text) &&
-      PLAIN_LITERAL.test(initialiserOf(line.text))
-    ) {
-      continue;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line === undefined || line.depth !== 0) continue;
+    // Prettier breaks a long `export { … }` list over several lines, and an
+    // export clause is the one statement here whose name list can span them.
+    // Joining the continuation is what keeps that from being a silent miss of
+    // exactly the kind this rule exists to stop.
+    let text = line.text;
+    while (/^export ?\{/.test(text) && !text.includes("}") && i + 1 < lines.length) {
+      i += 1;
+      text += lines[i]?.text ?? "";
     }
-    for (const name of exportedNames(line.text)) {
+    if (EXPORTED_BINDING.test(text) && PLAIN_LITERAL.test(initialiserOf(text))) continue;
+    for (const name of exportedNames(text)) {
       if (!graded.has(name) && !loud.includes(name)) loud.push(name);
     }
   }
