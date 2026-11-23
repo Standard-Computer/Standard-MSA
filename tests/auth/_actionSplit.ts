@@ -28,9 +28,11 @@
 //   2. the site's own body carries an inline `"use server"`, exported or not.
 //
 // Local helpers (`finish`, `text`, `recipientFrom` …) satisfy neither and are
-// deliberately not graded — but they still bound the body of the site above
-// them, which is what keeps a guard call in a trailing helper from being
-// miscredited to the action before it.
+// deliberately not graded — but a module-level one still bounds the body of
+// the site above it, which is what keeps a guard call in a trailing helper
+// from being miscredited to the action before it. Indentation is what tells
+// those apart from a declaration *inside* an action, which must not bound
+// anything; see ActionSite.body.
 //
 // Two rules keep the gap from coming back:
 //
@@ -54,12 +56,20 @@ export interface ActionSite {
   /** Does the body carry its own `"use server"`? Clause 2 above needs this. */
   readonly inlineDirective: boolean;
   /**
-   * The source from this declaration site up to the next one, or to EOF for
-   * the last. The body is bounded by the next *site* rather than by a close
-   * brace on purpose: a brace terminator is itself syntax-specific — a
-   * function declaration ends `\n}` but an arrow action ends `\n};` — so
-   * brace-hunting is exactly how the next syntax would slip through again.
-   * Sites are syntax-agnostic.
+   * The source from this declaration site up to the next site at the same or
+   * shallower indentation, or to EOF for the last. The body is bounded by a
+   * *site* rather than by a close brace on purpose: a brace terminator is
+   * itself syntax-specific — a function declaration ends `\n}` but an arrow
+   * action ends `\n};` — so brace-hunting is exactly how the next syntax
+   * would slip through again. Sites are syntax-agnostic.
+   *
+   * Indentation is what keeps a declaration *inside* the action from ending
+   * it. Every local is a site — family C matches any parenthesised
+   * initialiser, so `const n = (count ?? 0) + 1;` is one — and bounding on
+   * the merely-next site attributed a guard call below such a line to the
+   * local instead of to the action, reporting a correctly guarded action as
+   * unguarded. A nested declaration is deeper than its action and so cannot
+   * bound it; a trailing module-level helper is at column 0 and still does.
    */
   readonly body: string;
 }
@@ -103,6 +113,8 @@ interface DeclarationSite {
   readonly exported: boolean;
   /** Offset of the start of the declaration's line in the source. */
   readonly start: number;
+  /** Indentation columns before the declaration keyword. */
+  readonly depth: number;
 }
 
 /** Collapse space/tab runs so SITE_PATTERN can use literal single spaces. */
@@ -151,6 +163,7 @@ function findDeclarationSites(source: string): DeclarationSite[] {
         name: name === "" ? "default" : name,
         exported: (match[1] ?? match[3] ?? match[4]) !== undefined,
         start: offset,
+        depth: raw.length - raw.trimStart().length,
       });
     }
     offset += raw.length + 1; // the newline split() consumed
@@ -159,14 +172,18 @@ function findDeclarationSites(source: string): DeclarationSite[] {
 }
 
 /**
- * Does this body carry its own `"use server"`?
+ * Does this declaration carry its own `"use server"`?
  *
- * The site's own first line is skipped so a signature can never be mistaken
- * for a directive. A nested function's directive cannot leak in either: a
- * nested declaration is itself a site, so it ends this body.
+ * Read from the span up to the next site at *any* depth, not from the
+ * indentation-bounded body: the directive is a property of this declaration
+ * alone, and an inline-directive action nested in a component would otherwise
+ * make its enclosing function look like an action too. A directive is always
+ * the first statement of the function it applies to, so the narrow span
+ * always contains it. The site's own first line is skipped so a signature can
+ * never be mistaken for a directive.
  */
-function carriesInlineDirective(body: string): boolean {
-  const [, ...rest] = body.split("\n");
+function carriesInlineDirective(span: string): boolean {
+  const [, ...rest] = span.split("\n");
   return rest.some((line) => DIRECTIVE.test(line.trim()));
 }
 
@@ -181,11 +198,17 @@ export function findActionSites(source: string): readonly ActionSite[] {
   const sites = findDeclarationSites(source);
   return sites
     .map((site, i) => {
-      const body = source.slice(site.start, sites[i + 1]?.start ?? source.length);
+      // Guard attribution reaches to the next site that is not nested inside
+      // this one; the directive is read from the narrow span. See ActionSite
+      // and carriesInlineDirective for why the two bounds differ.
+      const encloser = sites.slice(i + 1).find((next) => next.depth <= site.depth);
+      const body = source.slice(site.start, encloser?.start ?? source.length);
       return {
         name: site.name,
         exported: site.exported,
-        inlineDirective: carriesInlineDirective(body),
+        inlineDirective: carriesInlineDirective(
+          source.slice(site.start, sites[i + 1]?.start ?? source.length),
+        ),
         body,
       };
     })
