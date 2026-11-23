@@ -38,11 +38,15 @@
 //
 //   1. One matcher covers every declaration form, rather than one syntax each
 //      time somebody notices a new one.
-//   2. A file that reaches this check and yields *no* recognised action is a
-//      failure naming the file, not a silent pass. That is what makes the next
-//      unanticipated syntax loud instead of invisible — and it is not
-//      hypothetical either: under an export-keyed matcher embed/page.tsx was
-//      already contributing zero checked sites while reporting zero misses.
+//   2. Every depth-0 export the matcher cannot resolve to a graded site is
+//      reported by name, not silently dropped — findUngradedExports. This is
+//      the rule that makes the next unanticipated syntax loud, and it has to be
+//      per-export: a per-*file* "nothing recognised" clause only defends the
+//      all-or-nothing case, which is the case that does not occur. Every
+//      operator action file in this repo has at least one recognised site, so
+//      an unrecognised `export const purgeAction: ServerAction = async () =>`
+//      beside a recognised neighbour yielded one checked site and zero misses —
+//      the original gap, one syntax over.
 //
 // Pure string in, array out — no fs, no DB, no server-only imports — so
 // _actionSplit.test.ts can cover the forms from fixtures without mutating app
@@ -99,11 +103,36 @@ export interface ActionSite {
  * `export interface` match nothing here at all — a type is erased at compile
  * time and can never be an action.
  *
+ * Clause C sees an annotated binding because `squeeze` removes the annotation
+ * first; see ANNOTATION for why that is a separate pass and not an optional
+ * group here.
+ *
  * Capture groups, in order: 1 = family A export prefix, 2 = family A name,
  * 3 = family B export prefix, 4 = family C export prefix, 5 = family C name.
  */
 const SITE_PATTERN =
   /^(export default |export )?(?:async function|function) (\w+)|^(export default )(?:async function|function|async) ?\(|^(export )?(?:const|let|var) (\w+) ?= ?(?:async\b|function\b|\(|<|\w+ ?=>)/;
+
+/**
+ * A type annotation on a value declaration, rewritten away before matching.
+ *
+ * `export const purgeAction: ServerAction = async () => {…}` is a server
+ * action, and clause C's `(\w+) ?= ?` could not see it — the annotation sits
+ * between the name and the `=`. The repo already writes that shape for
+ * non-actions (`export const metadata: Metadata` in layout.tsx and
+ * login/page.tsx), so it is a question of when, not if.
+ *
+ * Normalising here rather than widening SITE_PATTERN is deliberate: the
+ * natural spelling `(?:: ?[^=]*)?` nests a quantifier inside an optional
+ * group, which raises the star height to 2 and trips
+ * `security/detect-unsafe-regex`. This replacement is flat.
+ *
+ * `[^=]*` cannot cross an `=`, so a *function*-type annotation
+ * (`const f: (a: A) => void = …`) is not normalised cleanly and does not
+ * become a site. That shape stays caught, by findUngradedExports rather than
+ * by the matcher — which is the whole reason the loudness rule is per-export.
+ */
+const ANNOTATION = /^((?:export )?(?:const|let|var) \w+) ?:[^=]*= ?/;
 
 /** A `"use server"` directive, module-level or inline, as a trimmed line. */
 const DIRECTIVE = /^["']use server["'];/;
@@ -117,9 +146,60 @@ interface DeclarationSite {
   readonly depth: number;
 }
 
-/** Collapse space/tab runs so SITE_PATTERN can use literal single spaces. */
+/** A source line that is real code, not the interior of a template literal. */
+interface CodeLine {
+  /** Space/tab runs squeezed to one, left-trimmed, annotation removed. */
+  readonly text: string;
+  /** Offset of the start of the line in the source. */
+  readonly start: number;
+  /** Indentation columns before the first non-space character. */
+  readonly depth: number;
+}
+
+/**
+ * Collapse space/tab runs so SITE_PATTERN can use literal single spaces, and
+ * drop any type annotation so clause C can reach the initialiser.
+ */
 function squeeze(line: string): string {
-  return line.replace(/[\t ]+/g, " ").trimStart();
+  return line.replace(/[\t ]+/g, " ").trimStart().replace(ANNOTATION, "$1 = ");
+}
+
+/**
+ * The lines of `source` that are outside every template literal, normalised.
+ *
+ * Column-0 lines *inside* a template literal must yield neither a site nor a
+ * bound. A dedented HTML or script literal is ordinary in this repo — both
+ * sends/notices/actions.ts and settings/email/actions.ts send mail — and a
+ * line like `const tracker = (id) => id;` in one is a clause-C site at depth 0,
+ * so it ended the enclosing action's body before its guard call and reported a
+ * correctly guarded action as unguarded.
+ *
+ * Parity is counted per line over backticks that are not backslash-escaped. A
+ * backtick inside a quoted string or a comment desyncs it; that is an accepted
+ * limit of a line-based matcher, and it fails toward the old behaviour (a
+ * spurious bound, i.e. a false red somebody has to look at) rather than toward
+ * a silent miss.
+ *
+ * Offsets advance over skipped lines, so a literal stays inside the body of
+ * whatever declaration encloses it.
+ */
+function codeLines(source: string): CodeLine[] {
+  const lines: CodeLine[] = [];
+  let offset = 0;
+  let inTemplate = false;
+  for (const raw of source.split("\n")) {
+    const ticks = (raw.replace(/\\./g, "").match(/`/g) ?? []).length;
+    if (!inTemplate) {
+      lines.push({
+        text: squeeze(raw),
+        start: offset,
+        depth: raw.length - raw.trimStart().length,
+      });
+    }
+    if (ticks % 2 === 1) inTemplate = !inTemplate;
+    offset += raw.length + 1; // the newline split() consumed
+  }
+  return lines;
 }
 
 /**
@@ -152,21 +232,18 @@ export function hasModuleDirective(source: string): boolean {
 /** Every declaration site in source order, graded or not. */
 function findDeclarationSites(source: string): DeclarationSite[] {
   const sites: DeclarationSite[] = [];
-  let offset = 0;
-  for (const raw of source.split("\n")) {
-    const match = SITE_PATTERN.exec(squeeze(raw));
-    if (match !== null) {
-      // Exactly one family's groups participate in any single match; an
-      // anonymous default export captures no name.
-      const name = match[2] ?? match[5] ?? "";
-      sites.push({
-        name: name === "" ? "default" : name,
-        exported: (match[1] ?? match[3] ?? match[4]) !== undefined,
-        start: offset,
-        depth: raw.length - raw.trimStart().length,
-      });
-    }
-    offset += raw.length + 1; // the newline split() consumed
+  for (const line of codeLines(source)) {
+    const match = SITE_PATTERN.exec(line.text);
+    if (match === null) continue;
+    // Exactly one family's groups participate in any single match; an
+    // anonymous default export captures no name.
+    const name = match[2] ?? match[5] ?? "";
+    sites.push({
+      name: name === "" ? "default" : name,
+      exported: (match[1] ?? match[3] ?? match[4]) !== undefined,
+      start: line.start,
+      depth: line.depth,
+    });
   }
   return sites;
 }
@@ -213,4 +290,107 @@ export function findActionSites(source: string): readonly ActionSite[] {
       };
     })
     .filter((site) => (site.exported && moduleDirective) || site.inlineDirective);
+}
+
+/** `export type|interface|enum` — erased at compile time, never an action. */
+const EXPORTED_TYPE = /^export (?:type|interface|enum)\b/;
+
+/** `export * from "…"` / `export * as ns from "…"`. */
+const EXPORT_ALL = /^export \*/;
+
+/** `export { a, b as c }`, with or without a `from` clause. */
+const EXPORT_CLAUSE = /^export ?\{([^}]*)\}/;
+
+/** `export const|let|var { a, b } = …` — a destructured binding list. */
+const DESTRUCTURED_BINDING = /^export (?:const|let|var) \{([^}]*)\}/;
+
+/** `export [default] [async] function NAME`. */
+const EXPORTED_FUNCTION = /^export (?:default )?(?:async )?function (\w+)/;
+
+/** `export const|let|var NAME`, annotated or not — the bound name only. */
+const EXPORTED_BINDING = /^export (?:const|let|var) (\w+)/;
+
+/**
+ * An initialiser that is a plain value rather than anything callable.
+ *
+ * This is what keeps the Next route segment options and the annotated object
+ * literals already on main quiet: `export const dynamic = "force-dynamic"`,
+ * `export const metadata: Metadata = {…}`. A string, number, boolean, `null`,
+ * `undefined`, object or array literal cannot be a server action.
+ */
+const PLAIN_LITERAL = /^(?:["'`]|-?\d|true\b|false\b|null\b|undefined\b|\{|\[)/;
+
+/**
+ * The initialiser of a value declaration: everything past the assignment `=`.
+ *
+ * The first `=` that is not the head of an arrow `=>` is the assignment, which
+ * is what makes this work on an annotation the ANNOTATION pass could not
+ * rewrite — `const f: (a: A) => void = fn` yields `fn`, not `> void = fn`.
+ */
+function initialiserOf(text: string): string {
+  const assignment = /=(?!>)/.exec(text);
+  return assignment === null ? "" : text.slice(assignment.index + 1).trim();
+}
+
+/** The names a single depth-0 `export …` line publishes, in source order. */
+function exportedNames(text: string): string[] {
+  if (!/^export[ {]/.test(text) || EXPORTED_TYPE.test(text)) return [];
+  if (EXPORT_ALL.test(text)) return ["*"];
+  // `x as y` publishes y but the declaration to fix is x, so name the local.
+  // A `type` entry — `export { type Row, saveAction }` — is erased, as above.
+  const clause = EXPORT_CLAUSE.exec(text) ?? DESTRUCTURED_BINDING.exec(text);
+  if (clause !== undefined && clause !== null) {
+    return clause[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => !entry.startsWith("type "))
+      .map((entry) => entry.split(" ")[0] ?? "")
+      .filter((name) => /^\w+$/.test(name));
+  }
+  const named = EXPORTED_FUNCTION.exec(text) ?? EXPORTED_BINDING.exec(text);
+  if (named !== undefined && named !== null) return [named[1] ?? ""];
+  // `export default <expression>`, and anonymous `export default function (`.
+  return text.startsWith("export default") ? ["default"] : [];
+}
+
+/**
+ * Depth-0 exports of a `"use server"` module that resolve to no graded action.
+ *
+ * Rule 2 of the header, and the durable half of this guardrail. The matcher
+ * above recognises declaration *forms*; this recognises the fact of an export,
+ * which no new syntax can hide. An `export const purgeAction = withLogging(…)`
+ * or a `const purgeAction = …; export { purgeAction };` is not a function
+ * declaration form and is deliberately not chased with another alternative in
+ * SITE_PATTERN — it is reported here instead, and so is whatever shape comes
+ * next.
+ *
+ * Two conditions keep it off everything legitimately ungraded on main:
+ *
+ *   1. Only modules with a file-level directive. embed/page.tsx carries an
+ *      inline `"use server"` on one local function, so its exported page
+ *      component is a render path and correctly not an action — demanding a
+ *      guard from it is a false red on a real file.
+ *   2. Plain literal initialisers and type-only exports are not values that
+ *      could be an action. See PLAIN_LITERAL.
+ *
+ * Reported names are deduplicated: a name is one problem however many lines
+ * mention it.
+ */
+export function findUngradedExports(source: string): readonly string[] {
+  if (!hasModuleDirective(source)) return [];
+  const graded = new Set(findActionSites(source).map((site) => site.name));
+  const loud: string[] = [];
+  for (const line of codeLines(source)) {
+    if (line.depth !== 0) continue;
+    if (
+      EXPORTED_BINDING.test(line.text) &&
+      PLAIN_LITERAL.test(initialiserOf(line.text))
+    ) {
+      continue;
+    }
+    for (const name of exportedNames(line.text)) {
+      if (!graded.has(name) && !loud.includes(name)) loud.push(name);
+    }
+  }
+  return loud;
 }

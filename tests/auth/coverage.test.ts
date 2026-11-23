@@ -18,7 +18,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { classifyPath, SURFACES, UNMATCHED } from "../../src/lib/auth/surfaces";
-import { findActionSites } from "./_actionSplit";
+import { findActionSites, findUngradedExports } from "./_actionSplit";
 
 const APP_DIR = path.join(process.cwd(), "src", "app");
 
@@ -142,16 +142,26 @@ test("each server action in a guarded file guards itself", () => {
   // The split understands every declaration form, not just
   // `export async function` (SHA-3067) — see _actionSplit.ts for why that
   // mattered, and for why the unit is a function body rather than an exported
-  // symbol. A file that reaches this check and yields no recognised action is
-  // reported here too, so a form nobody anticipated fails loudly instead of
-  // passing vacuously.
+  // symbol.
+  //
+  // Anything the split cannot resolve is reported here as well, so a form
+  // nobody anticipated fails loudly instead of passing vacuously. That check is
+  // per *export*, not per file: a file with one recognised action and one
+  // unrecognised one yields sites, so a per-file "nothing recognised" clause
+  // never fires — and that is the only arrangement this repo actually has.
   const misses: string[] = [];
   for (const file of actionFiles()) {
     if (classifyPath(file.route).kind !== "operator") continue;
     const actions = findActionSites(file.source);
-    if (actions.length === 0) {
+    const ungraded = findUngradedExports(file.source);
+    for (const name of ungraded) {
+      misses.push(`<export resolved to no action: ${name}> (${file.file})`);
+    }
+    // The per-file backstop still covers a directive with nothing exported at
+    // all, where there is no export to name. It stays quiet when the per-export
+    // rule already named this file's problem, so the output says one thing.
+    if (actions.length === 0 && ungraded.length === 0) {
       misses.push(`<no server action recognised> (${file.file})`);
-      continue;
     }
     for (const action of actions) {
       if (!GUARD_CALL.test(action.body)) misses.push(`${action.name} (${file.file})`);
@@ -160,9 +170,10 @@ test("each server action in a guarded file guards itself", () => {
   assert.deepEqual(
     misses,
     [],
-    "each of these server actions needs its own guard call; a " +
-      "<no server action recognised> entry instead means this file carries a " +
-      '"use server" that tests/auth/_actionSplit.ts cannot resolve to any action — ' +
+    "each of these server actions needs its own guard call; an " +
+      "<export resolved to no action> or <no server action recognised> entry " +
+      'instead means this file carries a module-level "use server" with an ' +
+      "export that tests/auth/_actionSplit.ts cannot resolve to an action — " +
       "widen the matcher, or drop the directive if the file declares no action",
   );
 });
