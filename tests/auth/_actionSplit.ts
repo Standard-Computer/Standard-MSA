@@ -48,6 +48,12 @@
 //      beside a recognised neighbour yielded one checked site and zero misses —
 //      the original gap, one syntax over.
 //
+// Rule 2 has to cover the *lexer* as well as the matcher, which is the part
+// that was missing: lines dropped as template-literal interior produced no site
+// and no export, so one unpaired backtick in a comment switched the rule off
+// without a word. A dropped export, and a source that ends mid-literal, are
+// both reported now. See scanSource.
+//
 // Pure string in, array out — no fs, no DB, no server-only imports — so
 // _actionSplit.test.ts can cover the forms from fixtures without mutating app
 // source.
@@ -156,6 +162,34 @@ interface CodeLine {
   readonly depth: number;
 }
 
+/** A depth-0 `export …` line the scan dropped as template-literal interior. */
+interface DroppedExport {
+  /** Squeezed text of the line, so the published name can still be read off it. */
+  readonly text: string;
+  /** 1-based line number, for a failure message that says where to look. */
+  readonly line: number;
+}
+
+/** What one pass over the source yields: the real code, and what it dropped. */
+interface SourceScan {
+  readonly lines: readonly CodeLine[];
+  readonly droppedExports: readonly DroppedExport[];
+  /** Did the source end inside a template literal? That is always a desync. */
+  readonly unterminated: boolean;
+}
+
+/** `export` used as a statement keyword — `export …` or `export{…}`. */
+const EXPORT_STATEMENT = /^export[ {]/;
+
+/**
+ * Reported instead of a name when the source ends inside a template literal.
+ *
+ * There is no export to name in that case — the desync has swallowed the rest
+ * of the file — so the file itself is what gets reported. coverage.test.ts
+ * formats this entry on its own terms; see findUngradedExports.
+ */
+export const UNTERMINATED_TEMPLATE = "<source ends inside a template literal>";
+
 /**
  * Collapse space/tab runs so SITE_PATTERN can use literal single spaces, and
  * drop any type annotation so clause C can reach the initialiser.
@@ -165,7 +199,7 @@ function squeeze(line: string): string {
 }
 
 /**
- * The lines of `source` that are outside every template literal, normalised.
+ * One pass over `source`, separating real code from template-literal interior.
  *
  * Column-0 lines *inside* a template literal must yield neither a site nor a
  * bound. A dedented HTML or script literal is ordinary in this repo — both
@@ -174,32 +208,72 @@ function squeeze(line: string): string {
  * so it ended the enclosing action's body before its guard call and reported a
  * correctly guarded action as unguarded.
  *
- * Parity is counted per line over backticks that are not backslash-escaped. A
- * backtick inside a quoted string or a comment desyncs it; that is an accepted
- * limit of a line-based matcher, and it fails toward the old behaviour (a
- * spurious bound, i.e. a false red somebody has to look at) rather than toward
- * a silent miss.
+ * Parity is counted per line over backticks that are not backslash-escaped,
+ * with one exception: outside a literal, a line whose squeezed text starts with
+ * `//` is a comment and its backticks are prose. Inside a literal the very same
+ * line is literal text, where a backtick may well be the closing one, so the
+ * exception cannot apply there. It is not cosmetic — a backticked identifier
+ * wrapped across two comment lines is ordinary writing in this repo, and it is
+ * the entire live divergence on main: measured over all 131 .ts/.tsx files the
+ * exception changes the classification of exactly two lines,
+ * src/lib/legal/embedDocument.ts:27 and src/lib/legal/embedRoutes.ts:11, and
+ * nothing else. Stripping `//` from the *middle* of a line is deliberately not
+ * done, because a `https://…` URL inside a mail template is the common case
+ * there and would be misread as a comment.
+ *
+ * A backtick in a quoted string still desyncs the count. That is an accepted
+ * limit of a line-based matcher — a tokenizer is the wrong trade for a test
+ * helper, and the two hand-written ones tried on this problem each had their
+ * own bugs (a `"` inside a regex literal read as a string; no re-entry into
+ * code state inside `${…}`). What is *not* accepted is failing quietly.
+ *
+ * An earlier revision of this comment claimed a desync "fails toward the old
+ * behaviour (a spurious bound, i.e. a false red somebody has to look at) rather
+ * than toward a silent miss". Measured, it is the reverse, and strictly worse:
+ * one unpaired backtick flips `inTemplate` on and every following line is
+ * dropped, which yields no site *and* no export, so findUngradedExports goes
+ * blind along with the matcher and an unguarded action behind a guarded
+ * neighbour reads green. That is the card's original failure mode exactly,
+ * reached through the lexer instead of the matcher — and it is the one path
+ * that escaped rule 2 of the header.
+ *
+ * So the drop is made loud rather than reasoned about:
+ *
+ *   - a dropped depth-0 `export …` line is kept in `droppedExports`, and
+ *   - a source that ends inside a literal sets `unterminated`,
+ *
+ * both of which findUngradedExports reports. A desync in either direction and
+ * from any cause — comment, string, block comment, something nobody here
+ * thought of — is then a red somebody reads, which is the property the old
+ * comment asserted without holding.
  *
  * Offsets advance over skipped lines, so a literal stays inside the body of
  * whatever declaration encloses it.
  */
-function codeLines(source: string): CodeLine[] {
+function scanSource(source: string): SourceScan {
   const lines: CodeLine[] = [];
+  const droppedExports: DroppedExport[] = [];
   let offset = 0;
   let inTemplate = false;
+  let lineNumber = 0;
   for (const raw of source.split("\n")) {
-    const ticks = (raw.replace(/\\./g, "").match(/`/g) ?? []).length;
-    if (!inTemplate) {
-      lines.push({
-        text: squeeze(raw),
-        start: offset,
-        depth: raw.length - raw.trimStart().length,
-      });
+    lineNumber += 1;
+    const text = squeeze(raw);
+    const depth = raw.length - raw.trimStart().length;
+    if (inTemplate) {
+      // Dropped, but not silently: rule 2 has to reach this path too.
+      if (depth === 0 && EXPORT_STATEMENT.test(text)) {
+        droppedExports.push({ text, line: lineNumber });
+      }
+    } else {
+      lines.push({ text, start: offset, depth });
     }
+    const counted = inTemplate || !text.startsWith("//") ? raw : "";
+    const ticks = (counted.replace(/\\./g, "").match(/`/g) ?? []).length;
     if (ticks % 2 === 1) inTemplate = !inTemplate;
     offset += raw.length + 1; // the newline split() consumed
   }
-  return lines;
+  return { lines, droppedExports, unterminated: inTemplate };
 }
 
 /**
@@ -232,7 +306,7 @@ export function hasModuleDirective(source: string): boolean {
 /** Every declaration site in source order, graded or not. */
 function findDeclarationSites(source: string): DeclarationSite[] {
   const sites: DeclarationSite[] = [];
-  for (const line of codeLines(source)) {
+  for (const line of scanSource(source).lines) {
     const match = SITE_PATTERN.exec(line.text);
     if (match === null) continue;
     // Exactly one family's groups participate in any single match; an
@@ -307,8 +381,8 @@ const DESTRUCTURED_BINDING = /^export (?:const|let|var) \{([^}]*)\}/;
 /** `export [default] [async] function NAME`. */
 const EXPORTED_FUNCTION = /^export (?:default )?(?:async )?function (\w+)/;
 
-/** `export const|let|var NAME`, annotated or not — the bound name only. */
-const EXPORTED_BINDING = /^export (?:const|let|var) (\w+)/;
+/** The `export const|let|var ` head of a value declaration, without its names. */
+const VALUE_DECLARATION = /^export (?:const|let|var) /;
 
 /**
  * An initialiser that is a plain value rather than anything callable.
@@ -332,9 +406,73 @@ function initialiserOf(text: string): string {
   return assignment === null ? "" : text.slice(assignment.index + 1).trim();
 }
 
-/** The names a single depth-0 `export …` line publishes, in source order. */
+/** One declarator of a value declaration: the name it binds and its value. */
+interface Declarator {
+  readonly name: string;
+  readonly initialiser: string;
+}
+
+/**
+ * Split on the commas of `text` that are at bracket depth 0 and unquoted.
+ *
+ * Written as a scan rather than a regex because the thing being matched is
+ * nesting, which a regex cannot count. `<` and `>` are deliberately *not*
+ * treated as brackets: in TypeScript they are ambiguous between type arguments
+ * and the head of an arrow `=>`, so counting them drifts. Depth is clamped at
+ * zero for the same reason — a stray closer must not make the rest of the line
+ * look like it is at a negative depth, which would hide a real comma.
+ */
+function splitTopLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let quote = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote !== "") {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "]" || ch === "}") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts.filter((part) => part.trim() !== "");
+}
+
+/**
+ * Every declarator of a value declaration, given the text after its keyword.
+ *
+ * A single `export const` statement can bind more than one name, and the
+ * PLAIN_LITERAL skip below has to be applied per *declarator* rather than per
+ * line. Per line it was a second silent miss, in the same class as the lexer
+ * desync above:
+ *
+ *   export const LIMIT = 1,
+ *     purgeAction = async () => { await prisma.send.deleteMany(); };
+ *
+ * The first declarator's initialiser is a plain literal, so the whole line was
+ * skipped — taking its sibling with it — while the sibling's own line sits at
+ * depth 2 where the depth-0 loop never looks. One unguarded action, reported as
+ * nothing at all. Splitting the statement means `LIMIT` stays quiet on its own
+ * merits and `purgeAction` is reported on its own merits.
+ */
+function declaratorsOf(declaration: string): Declarator[] {
+  return splitTopLevel(declaration).map((part) => ({
+    name: /^\w+/.exec(part.trim())?.[0] ?? "",
+    initialiser: initialiserOf(part),
+  }));
+}
+
+/** The names a single depth-0 `export …` statement publishes, in source order. */
 function exportedNames(text: string): string[] {
-  if (!/^export[ {]/.test(text) || EXPORTED_TYPE.test(text)) return [];
+  if (!EXPORT_STATEMENT.test(text) || EXPORTED_TYPE.test(text)) return [];
   if (EXPORT_ALL.test(text)) return ["*"];
   // `x as y` publishes y but the declaration to fix is x, so name the local.
   // A `type` entry — `export { type Row, saveAction }` — is erased, as above.
@@ -347,10 +485,52 @@ function exportedNames(text: string): string[] {
       .map((entry) => entry.split(" ")[0] ?? "")
       .filter((name) => /^\w+$/.test(name));
   }
-  const named = EXPORTED_FUNCTION.exec(text) ?? EXPORTED_BINDING.exec(text);
-  if (named !== undefined && named !== null) return [named[1] ?? ""];
+  const named = EXPORTED_FUNCTION.exec(text);
+  if (named !== null) return [named[1] ?? ""];
+  const declaration = VALUE_DECLARATION.exec(text);
+  if (declaration !== null) {
+    // Per declarator, not per line: a plain-literal sibling must not silence a
+    // callable one. See declaratorsOf.
+    return declaratorsOf(text.slice(declaration[0].length))
+      .filter((bound) => !PLAIN_LITERAL.test(bound.initialiser))
+      .map((bound) => bound.name)
+      .filter((name) => name !== "");
+  }
   // `export default <expression>`, and anonymous `export default function (`.
   return text.startsWith("export default") ? ["default"] : [];
+}
+
+/**
+ * Does this `export …` statement publish nothing that could hide an action?
+ *
+ * Only needed to tell the two reasons exportedNames returns nothing apart: a
+ * type-only export and an all-plain-literal declaration genuinely publish no
+ * callable, whereas a statement this helper does not understand publishes
+ * something unknown. On the dropped-line path that difference decides between
+ * staying quiet and reporting the line, so it cannot be left to emptiness.
+ */
+function publishesNothing(text: string): boolean {
+  if (EXPORTED_TYPE.test(text)) return true;
+  const declaration = VALUE_DECLARATION.exec(text);
+  if (declaration === null) return false;
+  const bound = declaratorsOf(text.slice(declaration[0].length));
+  return bound.length > 0 && bound.every((one) => PLAIN_LITERAL.test(one.initialiser));
+}
+
+/**
+ * Does this depth-0 statement run onto the next line carrying a name with it?
+ *
+ * Two statements here can. Prettier breaks a long `export { … }` list over
+ * several lines, and a multi-declarator value declaration puts each declarator
+ * on its own line. Either way the continuation is indented, so the depth-0 loop
+ * never visits it by itself, and the name it carries would be a silent miss of
+ * exactly the kind this rule exists to stop. A trailing comma is what marks a
+ * value declaration as unfinished: a declaration that ends `[` or `{` is a
+ * multi-line literal, whose interior binds nothing.
+ */
+function statementContinues(text: string): boolean {
+  if (/^export ?\{/.test(text) && !text.includes("}")) return true;
+  return VALUE_DECLARATION.test(text) && text.trimEnd().endsWith(",");
 }
 
 /**
@@ -375,28 +555,41 @@ function exportedNames(text: string): string[] {
  *
  * Reported names are deduplicated: a name is one problem however many lines
  * mention it.
+ *
+ * Three causes are reported, not one. Besides an export the matcher cannot
+ * resolve, a depth-0 export the *scan* dropped as template-literal interior is
+ * reported, and a source that ends inside a literal is reported as the file.
+ * Those two are the lexer's share of rule 2: without them one unpaired backtick
+ * switches this whole function off silently. See scanSource.
  */
 export function findUngradedExports(source: string): readonly string[] {
   if (!hasModuleDirective(source)) return [];
   const graded = new Set(findActionSites(source).map((site) => site.name));
-  const lines = codeLines(source);
+  const scan = scanSource(source);
   const loud: string[] = [];
+  const report = (name: string): void => {
+    if (!graded.has(name) && !loud.includes(name)) loud.push(name);
+  };
+  const lines = scan.lines;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     if (line === undefined || line.depth !== 0) continue;
-    // Prettier breaks a long `export { … }` list over several lines, and an
-    // export clause is the one statement here whose name list can span them.
-    // Joining the continuation is what keeps that from being a silent miss of
-    // exactly the kind this rule exists to stop.
     let text = line.text;
-    while (/^export ?\{/.test(text) && !text.includes("}") && i + 1 < lines.length) {
+    while (i + 1 < lines.length && statementContinues(text)) {
       i += 1;
-      text += lines[i]?.text ?? "";
+      text += ` ${lines[i]?.text ?? ""}`;
     }
-    if (EXPORTED_BINDING.test(text) && PLAIN_LITERAL.test(initialiserOf(text))) continue;
-    for (const name of exportedNames(text)) {
-      if (!graded.has(name) && !loud.includes(name)) loud.push(name);
+    for (const name of exportedNames(text)) report(name);
+  }
+  // A dropped line still names what it published, so report the name where
+  // there is one and the line where there is not.
+  for (const dropped of scan.droppedExports) {
+    const names = exportedNames(dropped.text);
+    for (const name of names) report(name);
+    if (names.length === 0 && !publishesNothing(dropped.text)) {
+      loud.push(`<export skipped as template interior: line ${dropped.line}>`);
     }
   }
+  if (scan.unterminated) loud.push(UNTERMINATED_TEMPLATE);
   return loud;
 }
