@@ -11,6 +11,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate && npx next build
+# Prisma CLI + its *whole* dependency closure, staged for the run stage.
+# Computed from this install tree rather than listed, so a Prisma bump needs
+# no edit here; see scripts/collect-prisma-cli.ts for why (SHA-4378).
+RUN npx tsx scripts/collect-prisma-cli.ts /prisma-cli
 
 FROM node:22-alpine AS run
 WORKDIR /app
@@ -19,10 +23,12 @@ ENV NODE_ENV=production
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
-# Prisma CLI + schema for `migrate deploy` at container start.
+# Schema + migrations, and the Prisma CLI for `migrate deploy` at container
+# start. The CLI gets its own self-contained tree: it keeps the standalone
+# bundle's traced `@prisma/client` from being overwritten by the dev-tree
+# copy, and it is the layout docker-entrypoint.sh resolves the CLI from.
 COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/node_modules/prisma ./node_modules/prisma
-COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build /prisma-cli/node_modules ./prisma-cli/node_modules
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 EXPOSE 3000
 CMD ["sh", "./docker-entrypoint.sh"]

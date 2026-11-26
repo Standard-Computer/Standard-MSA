@@ -70,7 +70,7 @@ the repo. The ones that matter:
 | Variable | What it does |
 | --- | --- |
 | `APP_BASE_URL` | The public URL of this install. Baked into MSA links, the embed, and tracking URLs — set it before sending anything. |
-| `DATABASE_URL` | Leave as the compose default (`file:/app/data/standard-msa.db`). |
+| `DATABASE_URL` | Leave as the compose default (`file:/app/data/standard-msa.db`). Required — the container refuses to start without it. |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` + provider keys | Mail delivery; see below. |
 | `CRON_SECRET` | Long random string guarding the scheduled-job endpoints. |
 | `EMAIL_WEBHOOK_SECRET` | Long random string in your provider's webhook URL. |
@@ -79,6 +79,19 @@ the repo. The ones that matter:
 
 Secrets live in the environment only — never in the database, never in the
 repo, never shown by the UI.
+
+### Running it somewhere other than compose
+
+The same image runs on any container platform, with two things to get right
+because compose does them for you:
+
+- **Set `DATABASE_URL`.** There is no default. The container exits with
+  `entrypoint: DATABASE_URL is not set` rather than starting on a database
+  it guessed at.
+- **Attach a persistent volume at the directory the database lives in**
+  (`/app/data` for the value above). Without one the entrypoint creates the
+  directory, says so in the log, and the database — every document, send and
+  acceptance record — is destroyed the next time the container is replaced.
 
 ### Email provider
 
