@@ -148,3 +148,32 @@ test("Dockerfile and entrypoint agree on where the CLI tree lives", () => {
     /node prisma-cli\/node_modules\/prisma\/build\/index\.js migrate deploy/,
   );
 });
+
+test("run stage pins the listen address to every interface", () => {
+  // Next's standalone server binds `process.env.HOSTNAME || '0.0.0.0'`.
+  // Container runtimes routinely set HOSTNAME to the container id, and
+  // whatever is in it becomes the bind address. Measured with that exact
+  // expression: a container-id-style name that does not resolve is a hard
+  // listen failure (EAI_AGAIN, exit 1 — a crash loop), and a name that
+  // resolves to loopback binds ::1 only, so the process logs that it is
+  // listening and nothing outside can reach it. Neither is visible in a
+  // boot log (SHA-4378).
+  const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.match(
+    dockerfile,
+    /^ENV HOSTNAME=0\.0\.0\.0$/m,
+    "run stage leaves HOSTNAME to the platform — see this test's comment",
+  );
+
+  // The assertion above is only worth anything while that fallback is what
+  // Next generates. If this fails, Next changed the contract: re-read the
+  // generated server.js before trusting the ENV line.
+  const template = readFileSync(
+    path.join(repoRoot, "node_modules", "next", "dist", "build", "utils.js"),
+    "utf8",
+  );
+  assert.ok(
+    template.includes("process.env.HOSTNAME || '0.0.0.0'"),
+    "Next no longer generates the HOSTNAME fallback this ENV compensates for",
+  );
+});

@@ -19,6 +19,15 @@ RUN npx tsx scripts/collect-prisma-cli.ts /prisma-cli
 FROM node:22-alpine AS run
 WORKDIR /app
 ENV NODE_ENV=production
+# Pin the listen address. The standalone server.js binds
+# `process.env.HOSTNAME || '0.0.0.0'`, and container runtimes commonly set
+# HOSTNAME to the container id — which makes the server bind that one name
+# instead of every interface, so a healthy replica answers nothing from
+# outside. Set it here so the image does not depend on the platform leaving
+# HOSTNAME alone (SHA-4378).
+# PORT needs no default: server.js already falls back to 3000, which is what
+# EXPOSE and docker-compose.yml publish. Platforms that inject PORT win.
+ENV HOSTNAME=0.0.0.0
 # Standalone output: server.js + minimal node_modules, no full install.
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
