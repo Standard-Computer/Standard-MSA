@@ -122,6 +122,22 @@ test("Prisma CLI tree staged into the runtime image", async (t) => {
   });
 });
 
+/**
+ * The body of the Dockerfile's final `run` stage, sliced off at its own FROM
+ * line and ended by the next one. Anything asserted about the shipped image
+ * has to be read from here: an `ENV` or `COPY` in an earlier stage is
+ * discarded by the multi-stage build, so a whole-file match goes green on a
+ * line that never reaches the runtime image.
+ */
+const runStageOf = (dockerfile: string): string => {
+  const lines = dockerfile.split("\n");
+  const start = lines.findIndex((line) => /^FROM\s.*\sAS\srun\s*$/.test(line));
+  assert.ok(start >= 0, "Dockerfile has no final stage named `run`");
+  const after = lines.slice(start + 1);
+  const next = after.findIndex((line) => /^FROM\s/.test(line));
+  return (next === -1 ? after : after.slice(0, next)).join("\n");
+};
+
 test("Dockerfile and entrypoint agree on where the CLI tree lives", () => {
   const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   const entrypoint = readFileSync(
@@ -156,18 +172,26 @@ test("run stage pins the listen address to every interface", () => {
   // expression: a container-id-style name that does not resolve is a hard
   // listen failure (EAI_AGAIN, exit 1 — a crash loop), and a name that
   // resolves to loopback binds ::1 only, so the process logs that it is
-  // listening and nothing outside can reach it. Neither is visible in a
-  // boot log (SHA-4378).
+  // listening and nothing outside can reach it; a name that resolves to one
+  // routable address binds only that one, so loopback gets ECONNREFUSED while
+  // the edge is served. None is visible in a boot log (SHA-4378).
+  //
+  // Read from the run stage alone, not the whole file: the same ENV line in
+  // an earlier stage is thrown away by the build, and a whole-file match
+  // passed on exactly that mutation.
   const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.match(
-    dockerfile,
+    runStageOf(dockerfile),
     /^ENV HOSTNAME=0\.0\.0\.0$/m,
     "run stage leaves HOSTNAME to the platform — see this test's comment",
   );
 
   // The assertion above is only worth anything while that fallback is what
   // Next generates. If this fails, Next changed the contract: re-read the
-  // generated server.js before trusting the ENV line.
+  // generated server.js before trusting the ENV line. The cost of this half
+  // is that it string-matches single-quoted dependency source, so a Next
+  // reformat turns it red with no behaviour change: it is a tripwire telling
+  // you to go re-read utils.js, not a contract Next owes us.
   const template = readFileSync(
     path.join(repoRoot, "node_modules", "next", "dist", "build", "utils.js"),
     "utf8",
