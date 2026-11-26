@@ -165,7 +165,15 @@ embed is alive and being read.
 ## Self-host story
 
 `docker compose up` → one container, standalone Next server, SQLite on a
-named volume, migrations applied on start (`docker-entrypoint.sh`). First
+named volume, migrations applied on start (`docker-entrypoint.sh`). The
+standalone bundle traces only what the *server* imports, so the Prisma CLI
+that applies those migrations ships beside it in its own self-contained tree
+at `/app/prisma-cli/node_modules`, staged by
+`scripts/collect-prisma-cli.ts`. Copying a CLI out of a dev install means
+copying its whole dependency closure — npm hoists transitive dependencies to
+the top level, so picking packages by hand omits them and the container
+crash-loops on MODULE_NOT_FOUND before the server ever starts (SHA-4378).
+`tests/docker/prisma-cli-closure.test.ts` is the guard. First
 visit redirects to onboarding until `MspIdentity` exists. Upgrades:
 `docker compose pull && up -d` — migrations are additive. Backup = copy the
 volume's SQLite file. No external services required; email is optional until
