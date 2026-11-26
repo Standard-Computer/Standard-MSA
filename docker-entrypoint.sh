@@ -13,10 +13,13 @@ if [ -z "${DATABASE_URL}" ]; then
   exit 1
 fi
 
-# A `file:` database needs its directory to exist before migrate runs. Compose
-# mounts a volume at /app/data; a platform deploy with no volume attached has
-# no such directory and `migrate deploy` would fail on an opaque "Unable to
-# open the database file" instead of booting (SHA-4378).
+# `migrate deploy` does NOT need this mkdir: measured with the directory
+# absent at path depths `data` and `deep/a/b/c`, prisma 6.19.3's schema engine
+# creates the whole missing chain itself and exits 0 with every migration
+# applied. What this block buys is the warning below. Compose mounts a volume
+# at /app/data, so a missing directory means this deploy has no volume
+# attached and the database is about to be written inside the container, where
+# it dies with the replica — silent data loss worth one line of log (SHA-4378).
 case "${DATABASE_URL}" in
   file:/*)
     db_path="${DATABASE_URL#file:}"

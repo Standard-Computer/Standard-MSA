@@ -20,11 +20,16 @@ FROM node:22-alpine AS run
 WORKDIR /app
 ENV NODE_ENV=production
 # Pin the listen address. The standalone server.js binds
-# `process.env.HOSTNAME || '0.0.0.0'`, and container runtimes commonly set
-# HOSTNAME to the container id — which makes the server bind that one name
-# instead of every interface, so a healthy replica answers nothing from
-# outside. Set it here so the image does not depend on the platform leaving
-# HOSTNAME alone (SHA-4378).
+# `process.env.HOSTNAME || '0.0.0.0'`, so whatever the platform leaves in
+# HOSTNAME becomes the bind address — and container runtimes commonly set it
+# to the container id. Measured with that exact expression, each failure goes
+# a different direction: a name that does not resolve is a hard listen failure
+# (EAI_AGAIN, exit 1 — a crash loop); a name that resolves to one routable
+# address binds only that address, so the edge reaches it while in-container
+# loopback gets ECONNREFUSED (a localhost health check fails on a service that
+# is up); `localhost` binds ::1 only, the reverse. None of the three is
+# visible in a boot log. Set it here so the image does not depend on the
+# platform leaving HOSTNAME alone (SHA-4378).
 # PORT needs no default: server.js already falls back to 3000, which is what
 # EXPOSE and docker-compose.yml publish. Platforms that inject PORT win.
 ENV HOSTNAME=0.0.0.0
