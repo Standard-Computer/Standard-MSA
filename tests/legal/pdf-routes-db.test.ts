@@ -325,6 +325,20 @@ test("the operator download is NOT recorded as a public visit", async () => {
   assert.equal(await prisma.legalVisit.count(), before);
 });
 
+/**
+ * The cover's citation URL, as ONE exact string.
+ *
+ * Asserted with `assert.equal` against this rather than `text.includes(url)`:
+ * a substring check passes when arbitrary hosts sit either side of the
+ * expected one, which is precisely the mistake the cover bug would make
+ * (CodeQL `js/incomplete-url-substring-sanitization` flagged the first draft
+ * of these assertions, and it was right to).
+ */
+function coverUrl(text: string): string | null {
+  const match = /https?:\/\/\S+/.exec(text);
+  return match === null ? null : match[0];
+}
+
 test("REGRESSION: the cover cites the host the reader used, not the container's bind address", async () => {
   // Shipped bug, found on the Railway production deploy and not in CI: the
   // cover line reading "where to find the live text" said
@@ -340,7 +354,7 @@ test("REGRESSION: the cover cites the host the reader used, not the container's 
   );
   assert.equal(res.status, 200);
   const text = pdfText(await asBytes(res));
-  assert.ok(text.includes("https://legal.acme.test/legal/msa/2"), `cover URL missing: ${text.slice(0, 200)}`);
+  assert.equal(coverUrl(text), "https://legal.acme.test/legal/msa/2");
   assert.ok(!text.includes("0.0.0.0"), "a bind address is never a hostname a reader can reach");
 });
 
@@ -352,7 +366,7 @@ test("REGRESSION: with no proxy header, a wildcard bind falls back to APP_BASE_U
   });
   assert.equal(res.status, 200);
   const text = pdfText(await asBytes(res));
-  assert.ok(text.includes(`${BASE}/legal/msa/1`), "APP_BASE_URL is the fallback");
+  assert.equal(coverUrl(text), `${BASE}/legal/msa/1`, "APP_BASE_URL is the fallback");
   assert.ok(!text.includes("0.0.0.0"));
 });
 
@@ -365,7 +379,7 @@ test("REGRESSION: the operator PDF route derives its origin the same way", async
   );
   assert.equal(res.status, 200);
   const text = pdfText(await asBytes(res));
-  assert.ok(text.includes("https://ops.acme.test/legal/msa/2"), "the operator's own host");
+  assert.equal(coverUrl(text), "https://ops.acme.test/legal/msa/2", "the operator's own host");
   assert.ok(!text.includes("0.0.0.0"));
 });
 
@@ -382,5 +396,5 @@ test("REGRESSION: an injected Host header never reaches the cover of a saved agr
   assert.equal(res.status, 200);
   const text = pdfText(await asBytes(res));
   assert.ok(!text.includes("evil.test"), "a malformed host is dropped, not printed");
-  assert.ok(text.includes(`${BASE}/legal/msa/2`), "and the sound origin is used instead");
+  assert.equal(coverUrl(text), `${BASE}/legal/msa/2`, "and the sound origin is used instead");
 });
