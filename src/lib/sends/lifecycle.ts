@@ -102,6 +102,104 @@ export function rollUpStatus(events: readonly { type: string }[]): SendStatus {
   return status;
 }
 
+// ── Per-recipient stages ────────────────────────────────────────────────────
+//
+// The operator list needs a different question answered than `Send.status`
+// answers. Status is "how far along is this one send", a single monotonic
+// rung; the list has to say, per recipient, DID each thing happen and WHEN.
+// Those are not the same shape, and the status column structurally cannot
+// carry the second one: `clicked` and `viewed` fold onto `opened` above, so
+// no value of `status` can ever read "clicked".
+//
+// So these stages are read off the append-only trail, exactly like the
+// funnel is, and the status roll-up is left alone. A late bounce still
+// cannot un-accept a signed agreement, and it also cannot erase the
+// `accepted` cell — the trail keeps both facts and this shows both.
+
+/**
+ * Stages shown per recipient, in lifecycle order, with the label the
+ * operator sees.
+ *
+ * `delivered` is labelled "Received" and `accepted` "Signed" because that is
+ * how the people reading this screen describe them; the stored event names
+ * do not change. `always` stages hold a column even when empty, so the
+ * headline question ("did they sign it?") has a fixed place to look; the
+ * rest appear only for a group that has them, which keeps the common table
+ * narrow without hiding anything that happened.
+ */
+export const RECIPIENT_STAGES = [
+  { type: "sent", label: "Sent", always: true },
+  { type: "delivered", label: "Received", always: true },
+  { type: "opened", label: "Opened", always: true },
+  { type: "clicked", label: "Clicked", always: true },
+  { type: "viewed", label: "Viewed", always: false },
+  { type: "accepted", label: "Signed", always: true },
+  { type: "declined", label: "Declined", always: false },
+  { type: "bounced", label: "Bounced", always: false },
+] as const satisfies readonly { type: SendEventType; label: string; always: boolean }[];
+
+export type RecipientStage = (typeof RECIPIENT_STAGES)[number];
+
+export type StageCell = {
+  type: SendEventType;
+  label: string;
+  /** When this stage was FIRST reached, or null if it never was. */
+  at: Date | null;
+};
+
+type TrailEvent = { type: string; occurredAt: Date };
+
+/**
+ * When each stage was first reached. FIRST, not last: three opens of the
+ * same email are one "Opened", and the honest answer to when it was opened
+ * is the first time, not whenever the pixel was last fetched. Computed as a
+ * minimum rather than by taking the head of the list, so a caller that hands
+ * over an unsorted trail still gets the right answer.
+ */
+export function stageTimes(events: readonly TrailEvent[]): Map<SendEventType, Date> {
+  const first = new Map<SendEventType, Date>();
+  for (const event of events) {
+    if (!isSendEventType(event.type)) continue;
+    const seen = first.get(event.type);
+    if (!seen || event.occurredAt < seen) first.set(event.type, event.occurredAt);
+  }
+  return first;
+}
+
+/**
+ * One recipient's stages in display order, every stage present whether or
+ * not it happened — the caller decides which cells to render.
+ *
+ * `acceptedAt` is an optional second source for the Signed cell. The
+ * acceptance record and the `accepted` event are written in one transaction,
+ * so they agree; this reads the column too rather than letting a trail that
+ * somehow lost its event report an accepted agreement as unsigned.
+ */
+export function recipientStages(
+  events: readonly TrailEvent[],
+  acceptedAt?: Date | null,
+): StageCell[] {
+  const first = stageTimes(events);
+  return RECIPIENT_STAGES.map(({ type, label }) => {
+    const at = first.get(type) ?? (type === "accepted" ? acceptedAt ?? null : null);
+    return { type, label, at };
+  });
+}
+
+/**
+ * The stage columns a group of sends shows: the `always` ones, plus any
+ * optional stage at least one of these sends actually reached.
+ */
+export function visibleStages(
+  sends: readonly { events: readonly { type: string }[] }[],
+): RecipientStage[] {
+  const reached = new Set<string>();
+  for (const send of sends) {
+    for (const event of send.events) reached.add(event.type);
+  }
+  return RECIPIENT_STAGES.filter((stage) => stage.always || reached.has(stage.type));
+}
+
 // ── Funnel ──────────────────────────────────────────────────────────────────
 
 /** Funnel stages, in display order. */

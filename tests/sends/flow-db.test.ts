@@ -31,6 +31,7 @@ let prisma: typeof import("../../src/lib/db").prisma;
 let sends: typeof import("../../src/lib/sends/sends");
 let evidence: typeof import("../../src/lib/sends/evidence");
 let projection: typeof import("../../src/lib/sends/projection");
+let lifecycle: typeof import("../../src/lib/sends/lifecycle");
 let render: typeof import("../../src/lib/sends/render");
 let tokens: typeof import("../../src/lib/sends/tokens");
 
@@ -53,6 +54,7 @@ before(async () => {
   sends = await import("../../src/lib/sends/sends");
   evidence = await import("../../src/lib/sends/evidence");
   projection = await import("../../src/lib/sends/projection");
+  lifecycle = await import("../../src/lib/sends/lifecycle");
   render = await import("../../src/lib/sends/render");
   tokens = await import("../../src/lib/sends/tokens");
 
@@ -478,4 +480,50 @@ test("refSendId and projectedFrom reject junk rather than guessing", () => {
   assert.equal(projection.projectedFrom('{"deliveryEventId":7}'), 7);
   assert.equal(projection.projectedFrom("{}"), null);
   assert.equal(projection.projectedFrom("nope"), null);
+});
+
+test("the operator LIST projects every send's signals, not just the one being viewed (SHA-4500)", async () => {
+  // The /sends table shows Received / Opened / Clicked per recipient, read
+  // off each send's own trail. Before SHA-4500 only the detail page
+  // projected, so a recipient nobody had clicked into showed "—" in those
+  // cells while the delivery log held the signals all along.
+  const quiet = await sends.createSend(versionId, { email: "list-quiet@mail.shadowpsa.com" });
+  const busy = await sends.createSend(versionId, { email: "list-busy@mail.shadowpsa.com" });
+
+  await fakeOutbound(busy.send.id, "list-busy@mail.shadowpsa.com", [
+    { type: "sent", source: "app", at: new Date("2026-11-27T10:00:00Z") },
+    { type: "delivered", source: "webhook", at: new Date("2026-11-27T10:00:30Z") },
+    { type: "clicked", source: "click", at: new Date("2026-11-27T10:04:20Z") },
+  ]);
+
+  const list = (await sends.allSends()).filter((s) =>
+    [quiet.send.id, busy.send.id].includes(s.id),
+  );
+  const projected = await projection.projectDeliverySignalsForSends(list);
+  assert.equal(projected, 3, "all three of the busy send's signals land from the list screen");
+
+  const busyAfter = await sends.sendByToken(busy.send.token);
+  assert.deepEqual(sortedTypes(busyAfter!.events), ["clicked", "created", "delivered", "sent"]);
+  // The cells the table renders, from the trail the list just projected.
+  const cells = new Map(
+    lifecycle
+      .recipientStages(busyAfter!.events, busyAfter!.acceptance?.acceptedAt ?? null)
+      .map((cell) => [cell.label, cell.at]),
+  );
+  assert.equal(cells.get("Received")?.toISOString(), "2026-11-27T10:00:30.000Z");
+  assert.equal(cells.get("Clicked")?.toISOString(), "2026-11-27T10:04:20.000Z");
+  assert.equal(cells.get("Opened"), null, "the pixel never fired; the cell says so");
+  assert.equal(cells.get("Signed"), null);
+  assert.equal(busyAfter!.status, "opened", "status still has no rung for a click");
+
+  // A send with no outbound at all is untouched and costs no projection pass.
+  const quietAfter = await sends.sendByToken(quiet.send.token);
+  assert.deepEqual(sortedTypes(quietAfter!.events), ["created"]);
+
+  // Idempotent on the list path too: a second page load appends nothing.
+  const again = await projection.projectDeliverySignalsForSends(await sends.allSends());
+  assert.equal(again, 0, "re-rendering the list must not duplicate the trail");
+  assert.equal(await prisma.sendEvent.count({ where: { sendId: busy.send.id } }), 4);
+
+  assert.equal(await projection.projectDeliverySignalsForSends([]), 0);
 });
