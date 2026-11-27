@@ -11,6 +11,7 @@
 // version-scoped sibling at ./[version]/pdf for one historical version.
 
 import { publishedDocument } from "@/lib/legal/documents";
+import { requestOrigin } from "@/lib/http/requestOrigin";
 import { documentVersionPdf, pdfResponse } from "@/lib/legal/pdfDocument";
 import { recordPageVisit } from "@/lib/visits/record";
 
@@ -28,7 +29,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ slug: string }>
   await recordPageVisit(`/legal/${doc.slug}/pdf`, doc.slug, current.version, req.headers);
 
   const download = await documentVersionPdf(doc, current, {
-    requestOrigin: new URL(req.url).origin,
+    requestOrigin: requestOrigin(req),
   });
   return pdfResponse(download);
 }
