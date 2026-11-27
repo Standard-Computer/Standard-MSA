@@ -76,6 +76,17 @@ export default async function DocumentsPage({
                   /legal/{d.slug} ·{" "}
                   {published.length > 0 ? `v${published[0].version} published` : "nothing published yet"}
                   {draft ? ` · draft v${draft.version} open` : ""}
+                  {published.length > 0 ? (
+                    <>
+                      {" · "}
+                      <a
+                        href={`/documents/${d.slug}/versions/${published[0].version}/pdf`}
+                        className="text-blue-700"
+                      >
+                        Download PDF
+                      </a>
+                    </>
+                  ) : null}
                 </p>
               </li>
             );

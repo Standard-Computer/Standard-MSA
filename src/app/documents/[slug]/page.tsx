@@ -110,6 +110,12 @@ export default async function DocumentPage({
                       <Link href={`/documents/${doc.slug}/draft`} className="text-blue-700">
                         Edit
                       </Link>
+                      <a
+                        href={`/documents/${doc.slug}/versions/${v.version}/pdf`}
+                        className="text-blue-700"
+                      >
+                        Draft PDF
+                      </a>
                       <form action={publishDraftAction}>
                         <input type="hidden" name="slug" value={doc.slug} />
                         <input type="hidden" name="versionId" value={v.id} />
@@ -119,9 +125,17 @@ export default async function DocumentPage({
                       </form>
                     </span>
                   ) : (
-                    <Link href={`/legal/${doc.slug}/${v.version}`} className="text-blue-700">
-                      View
-                    </Link>
+                    <span className="flex gap-2">
+                      <Link href={`/legal/${doc.slug}/${v.version}`} className="text-blue-700">
+                        View
+                      </Link>
+                      <a
+                        href={`/documents/${doc.slug}/versions/${v.version}/pdf`}
+                        className="text-blue-700"
+                      >
+                        Download PDF
+                      </a>
+                    </span>
                   )}
                 </div>
                 {v.changelog ? <p className="mt-1 text-slate-600">{v.changelog}</p> : null}
@@ -131,7 +145,12 @@ export default async function DocumentPage({
         )}
       </section>
 
-      <p className="mt-8 text-xs text-slate-500">
+      <p className="mt-6 text-xs text-slate-500">
+        PDF downloads render the website wording: your identity filled in, client and signer
+        details as generic language (&quot;the Client&quot;, &quot;the date of acceptance&quot;) — exactly what
+        /legal and the embed show when no client is named. Draft PDFs are marked as drafts.
+      </p>
+      <p className="mt-2 text-xs text-slate-500">
         Publishing makes a version public and immutable; it never emails anybody. To tell prior
         recipients about an update, use{" "}
         <Link href="/sends/notices" className="text-blue-700">

@@ -146,6 +146,12 @@ export const SURFACES: readonly Surface[] = [
   { pattern: "/embed", kind: "operator", refusal: "redirect" },
   { pattern: "/settings/**", kind: "operator", refusal: "redirect" },
   { pattern: "/documents", kind: "operator", refusal: "redirect" },
+  // Specific before general: the PDF download is data, not a screen (SHA-4505).
+  {
+    pattern: "/documents/[slug]/versions/[version]/pdf",
+    kind: "operator",
+    refusal: "status",
+  },
   { pattern: "/documents/**", kind: "operator", refusal: "redirect" },
   { pattern: "/sends", kind: "operator", refusal: "redirect" },
   { pattern: "/sends/new", kind: "operator", refusal: "redirect" },

@@ -50,6 +50,10 @@ export default async function LegalVersionPage({
         v{ver.version}
         {ver.publishedAt ? ` · effective ${ver.publishedAt.toISOString().slice(0, 10)}` : ""} · historical
         version
+        {" · "}
+        <a href={`/legal/${doc.slug}/${ver.version}/pdf`} className="text-blue-700">
+          Download PDF
+        </a>
       </p>
       <div dangerouslySetInnerHTML={{ __html: html }} />
     </main>
