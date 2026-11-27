@@ -9,6 +9,7 @@ import {
   type Funnel,
 } from "@/lib/sends/lifecycle";
 import { listNoticeCandidates } from "@/lib/sends/notices";
+import { projectDeliverySignalsForSends } from "@/lib/sends/projection";
 import { allSends, type SendWithTrail } from "@/lib/sends/sends";
 import { requireOperator } from "@/lib/auth/page";
 
@@ -59,7 +60,16 @@ export default async function SendsPage({
 }) {
   const { ok, msg } = await searchParams;
   await requireOperator("/sends");
-  const [sends, candidates] = await Promise.all([allSends(), listNoticeCandidates()]);
+  const [loaded, candidates] = await Promise.all([allSends(), listNoticeCandidates()]);
+  // Email signals reach a send's trail only by projection, and until now the
+  // per-send detail page was the only operator screen that projected. So a
+  // recipient nobody had clicked into had `delivered` / `opened` / `clicked`
+  // sitting in the delivery log and absent from this screen's funnel — and
+  // absent from the per-recipient stage columns GH #21 adds here, which read
+  // the same trail. Idempotent and serialised per send, exactly as the
+  // detail page's call is.
+  const projected = await projectDeliverySignalsForSends(loaded);
+  const sends = projected > 0 ? await allSends() : loaded;
   const groups = groupByDocument(sends);
 
   return (
