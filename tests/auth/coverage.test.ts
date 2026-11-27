@@ -14,79 +14,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
 import { classifyPath, SURFACES, UNMATCHED } from "../../src/lib/auth/surfaces";
+import { actionFiles, isDir, listDir, readSource, routeFiles } from "../_appRoutes";
 import { findActionSites, findUngradedExports } from "./_actionSplit";
-
-const APP_DIR = path.join(process.cwd(), "src", "app");
-
-// Walking a directory tree means non-literal paths by definition. Every path
-// below is built from APP_DIR plus names this repo's own src/app yields —
-// nothing here reads request input.
-/* eslint-disable security/detect-non-literal-fs-filename */
-const listDir = (dir: string): string[] => readdirSync(dir);
-const isDir = (full: string): boolean => statSync(full).isDirectory();
-const readSource = (full: string): string => readFileSync(full, "utf8");
-/* eslint-enable security/detect-non-literal-fs-filename */
-
-interface RouteFile {
-  /** The URL path Next derives from the directory, e.g. `/sends/[id]`. */
-  readonly route: string;
-  /** Repo-relative file path, for a failure message that says where to look. */
-  readonly file: string;
-  readonly source: string;
-}
-
-/** Route groups `(name)` and private folders `_name` are not URL segments. */
-function isUrlSegment(dir: string): boolean {
-  return !(dir.startsWith("(") && dir.endsWith(")")) && !dir.startsWith("_");
-}
-
-function walk(dir: string, segments: string[], out: RouteFile[]): void {
-  for (const entry of listDir(dir)) {
-    const full = path.join(dir, entry);
-    if (isDir(full)) {
-      walk(full, isUrlSegment(entry) ? [...segments, entry] : segments, out);
-      continue;
-    }
-    if (entry !== "page.tsx" && entry !== "page.ts" && entry !== "route.ts") continue;
-    out.push({
-      route: `/${segments.join("/")}`,
-      file: path.relative(process.cwd(), full),
-      source: readSource(full),
-    });
-  }
-}
-
-/** Every page and route handler in the app, with its URL path. */
-function routeFiles(): RouteFile[] {
-  const out: RouteFile[] = [];
-  walk(APP_DIR, [], out);
-  return out;
-}
-
-/** Files that declare server actions, with the operator route they sit under. */
-function actionFiles(): RouteFile[] {
-  const out: RouteFile[] = [];
-  const visit = (dir: string, segments: string[]): void => {
-    for (const entry of listDir(dir)) {
-      const full = path.join(dir, entry);
-      if (isDir(full)) {
-        visit(full, isUrlSegment(entry) ? [...segments, entry] : segments);
-        continue;
-      }
-      if (!entry.endsWith(".ts") && !entry.endsWith(".tsx")) continue;
-      const source = readSource(full);
-      if (!/^\s*["']use server["'];/m.test(source)) continue;
-      out.push({ route: `/${segments.join("/")}`, file: path.relative(process.cwd(), full), source });
-    }
-  };
-  visit(APP_DIR, []);
-  return out;
-}
 
 /**
  * How the rules below decide a source really CALLS a guard.

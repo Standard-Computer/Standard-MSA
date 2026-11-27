@@ -119,8 +119,25 @@ Cross-lane contracts (who calls whom):
 Shared-file rules: `prisma/schema.prisma` is pre-seeded with the full v0
 model — lanes only touch it for genuinely new columns, add-only, one lane at
 a time. `package.json` dep additions are fine (JSON merges cleanly); note
-them in the PR description. `src/app/layout.tsx` and the home page belong to
-SHA-2956; other lanes add routes, not nav edits.
+them in the PR description.
+
+`src/app/layout.tsx` and the home page were SHA-2956's, under a v0 rule that
+other lanes add routes and not nav edits. That rule cost more than it saved:
+`/embed` and `/settings/email` were built, merged and then unreachable,
+because nobody owned the link. SHA-4503 replaced it with a shared operator
+shell, so the rule is now:
+
+- The nav is a table, `src/lib/nav/nav.ts`, and the `/` dashboard is
+  generated from it. **A lane that adds an operator screen adds its entry
+  there**, in the same PR. `tests/nav/nav.test.ts` fails the build otherwise:
+  every operator screen must be a nav destination or be named in that file's
+  `NAV_SUB_SCREENS` with the screen it is reached from.
+- `src/app/layout.tsx` and `src/components/nav/**` stay single-owner — take
+  them in their own ticket, not as a side effect of a module lane.
+- Whether a screen gets the chrome is not a list anywhere: it is
+  `classifyPath()` from `src/lib/auth/surfaces.ts`, the same registry that
+  decides whether the path needs an operator session. Classify the route and
+  the chrome follows.
 
 ## Request surfaces
 

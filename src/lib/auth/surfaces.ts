@@ -10,6 +10,16 @@
 //
 // Deny by default is the point. An unrecognised path classifies as operator,
 // so a route that nobody thought about is refused rather than served.
+//
+// Second consumer, since SHA-4503: the operator chrome. `showsOperatorNav()`
+// in src/lib/nav/nav.ts asks classifyPath() whether a screen gets the left
+// nav, so "needs a session" and "shows operator navigation" are one decision
+// made in one place, and a new public route stays bare by classifying it here
+// rather than by also remembering a nav exclusion list somewhere else.
+//
+// That makes this file reachable from a client component. It stays pure for
+// that reason — no imports, nothing server-only — and tests/nav/nav.test.ts
+// asserts it.
 
 /** How a surface is authorised. */
 export type SurfaceKind =
