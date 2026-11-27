@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Pin the operator console to light mode (Sean's ruling, GH #19 AC 1).
+ *
+ * The page itself was never at risk — the root layout hard-codes
+ * `bg-white text-slate-900` and the repo carries no `dark:` variant — but
+ * NATIVE CONTROLS are not painted by those classes. With no `color-scheme`
+ * declared, a browser on a dark-mode OS renders <input>, <select>,
+ * <textarea> and the scrollbars from its dark palette: light text on a dark
+ * field, sitting inside our white card. That is the "unreadable text"
+ * complaint arriving by a route no Tailwind class can reach.
+ *
+ * Declaring it here rather than on <html> keeps it next to the ratios it
+ * belongs with, and it is the whole of the fix: one line, no JS, resolved
+ * before first paint, and nothing for `prefers-color-scheme` to flip.
+ *
+ * NOT done for the embed frame (src/lib/legal/embedDocument.ts), and that
+ * asymmetry is deliberate: the embed's light palette sets
+ * `--legal-bg:transparent` so the frame inherits the MSP's page. A
+ * `color-scheme` there would give the frame an opaque UA canvas and the
+ * embed would stop blending into a non-white host site. The frame renders
+ * static prose — it has no native control to protect. */
+:root {
+  color-scheme: light;
+}

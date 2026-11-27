@@ -94,8 +94,22 @@ export type EmbedDocumentInput = {
 // means; the dark palette MUST override it, because #e2e8f0 text on a white
 // host page measured 1.23:1 against WCAG AA's 4.5:1 — unreadable contract
 // text reachable from the default snippet plus a dark-mode OS.
+//
+// THE LIGHT PALETTE'S MUTED TIERS WERE DARKENED (Sean's ruling, GH #19).
+// `--legal-muted` was #475569 (7.58:1 on a white host) and `--legal-faint`
+// #64748b (4.76:1 — AA by 0.26, at the .8em the meta and footer are set in).
+// Both now land in the AAA band, and the agreement body no longer uses
+// either one: see `.sm-l-p` / `.sm-l-ol` / `.sm-l-ul` / `.sm-l-quote` below.
+// Ratios are pinned by tests/ui/readable-text.test.ts against #ffffff,
+// because the light palette's surface is `transparent` — whatever the MSP's
+// page is — and white is the bright-end worst case for dark text.
+//
+// The DARK palette is deliberately untouched: measured against its own
+// #0f172a surface it is 14.48 / 12.02 / 6.96 / 9.90:1, all clear of AA, and
+// every value here is load-bearing for the pinned-light-vs-prefers split
+// described above. Darkening a dark palette's "muted" would invert it.
 const EMBED_LIGHT_VARS =
-  "--legal-fg:#0f172a;--legal-muted:#475569;--legal-faint:#64748b;--legal-rule:#e2e8f0;--legal-link:#1d4ed8;--legal-bg:transparent;";
+  "--legal-fg:#0f172a;--legal-muted:#334155;--legal-faint:#475569;--legal-rule:#e2e8f0;--legal-link:#1d4ed8;--legal-bg:transparent;";
 const EMBED_DARK_VARS =
   "--legal-fg:#e2e8f0;--legal-muted:#cbd5e1;--legal-faint:#94a3b8;--legal-rule:#334155;--legal-link:#93c5fd;--legal-bg:#0f172a;";
 
@@ -142,13 +156,19 @@ body{font:inherit;font-family:inherit;color:var(--legal-fg);line-height:1.65;
 .sm-l-h2{font-size:1em;font-weight:600;margin:1.4em 0 .4em;}
 .sm-l-h3{font-size:.85em;font-weight:600;text-transform:uppercase;
   letter-spacing:.04em;color:var(--legal-muted);margin:1.2em 0 .4em;}
-.sm-l-p{margin:0 0 .9em;color:var(--legal-muted);}
+/* THE AGREEMENT TEXT ITSELF. --legal-fg, never --legal-muted: these four
+   selectors carry the clauses a customer is being asked to agree to, and
+   they were the whole of Sean's "no gray fonts" complaint. .sm-l-body
+   already sets --legal-fg; these declared it again one tier lighter and so
+   won. Left explicit rather than deleted so a <p> rendered outside
+   .sm-l-body (the intro block) cannot silently fall back to the UA colour. */
+.sm-l-p{margin:0 0 .9em;color:var(--legal-fg);}
 .sm-l-strong{font-weight:600;color:var(--legal-fg);}
-.sm-l-ol{margin:0 0 .9em;padding-left:1.5em;list-style:decimal;color:var(--legal-muted);}
-.sm-l-ul{margin:0 0 .9em;padding-left:1.5em;list-style:disc;color:var(--legal-muted);}
+.sm-l-ol{margin:0 0 .9em;padding-left:1.5em;list-style:decimal;color:var(--legal-fg);}
+.sm-l-ul{margin:0 0 .9em;padding-left:1.5em;list-style:disc;color:var(--legal-fg);}
 .sm-l-li{margin:0 0 .4em;padding-left:.15em;}
 .sm-l-quote{margin:0 0 .9em;padding-left:1em;font-style:italic;
-  border-left:2px solid var(--legal-rule);color:var(--legal-muted);}
+  border-left:2px solid var(--legal-rule);color:var(--legal-fg);}
 .sm-l-em{font-style:italic;}
 .sm-l-hr{border:0;border-top:1px solid var(--legal-rule);margin:1.5em 0;}
 .sm-l-pre{margin:0 0 .9em;overflow-x:auto;}
@@ -168,7 +188,9 @@ body{font:inherit;font-family:inherit;color:var(--legal-fg);line-height:1.65;
   font-size:.8em;color:var(--legal-faint);}
 .sm-l-footer p{margin:0 0 .2em;}
 .sm-l-accent{height:3px;background:var(--legal-accent);border-radius:3px;margin-bottom:1.25rem;}
-.sm-l-intro{margin:0 0 1.25rem;font-size:.95em;color:var(--legal-muted);}
+/* Operator-written prose that introduces the agreements — body copy, not
+   meta, so it takes the body colour too. */
+.sm-l-intro{margin:0 0 1.25rem;font-size:.95em;color:var(--legal-fg);}
 .sm-l-intro p{margin:0 0 .75em;}
 .sm-l-intro p:last-child{margin-bottom:0;}
 .sm-l-empty{color:var(--legal-faint);font-size:.9em;padding:1rem 0;}
