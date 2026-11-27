@@ -71,6 +71,7 @@ test("serializeVersionDefaults round-trips through parseVersionDefaults, lowerca
 test("kind labels: known kinds get prose, unknown kinds pass through", () => {
   assert.equal(documentKindLabel("msa"), "Master Service Agreement");
   assert.equal(documentKindLabel("hipaa-baa"), "HIPAA Business Associate Agreement");
+  assert.equal(documentKindLabel("website-terms"), "Website Terms of Use");
   assert.equal(documentKindLabel("nda"), "nda");
 });
 
@@ -96,15 +97,33 @@ const BLANK_IDENTITY: MspValues = {
   venue: null,
 };
 
-test("both SHA-2970 documents ship: an MSA and a HIPAA BAA", () => {
+test("three starter documents ship: MSA, HIPAA BAA (SHA-2970) and website terms (GH #22)", () => {
   assert.deepEqual(
     STARTER_TEMPLATES.map((t) => t.kind).sort(),
-    ["hipaa-baa", "msa"],
+    ["hipaa-baa", "msa", "website-terms"],
   );
   assert.equal(starterTemplate("msa")?.title, "Master Service Agreement");
   assert.equal(starterTemplate("hipaa-baa")?.title, "HIPAA Business Associate Agreement");
+  assert.equal(starterTemplate("website-terms")?.title, "Website Terms of Use");
   assert.equal(starterTemplate("nope"), null);
   assert.match(TEMPLATE_DISCLAIMER, /not legal advice/);
+});
+
+test("website terms: continued use is the acceptance, and no client token is needed", () => {
+  const t = starterTemplate("website-terms");
+  assert.ok(t, "the website-terms starter exists");
+  assert.match(t.bodyMarkdown, /Continued use of the Site constitutes acceptance/);
+  // The whole point of this template is the no-known-client case: it must
+  // not reference any client/signer token, so it renders identically with
+  // or without a recipient — there is nobody to fill in.
+  assert.ok(
+    !/\{\{\s*(client_|signer_|accepted_date|effective_date)/.test(t.bodyMarkdown),
+    "website terms must not use client/signer/acceptance tokens",
+  );
+  // And it renders without a single generic-client phrase: with a full
+  // identity nothing in it needs the GENERIC_PUBLIC wording at all.
+  const rendered = renderLegalBody(t.bodyMarkdown, "public", FULL_IDENTITY, t.variables);
+  assert.ok(!rendered.includes("the Client"), "no generic client wording should be needed");
 });
 
 test("every template renders through the public pipeline with no raw tokens and no unset blanks", () => {

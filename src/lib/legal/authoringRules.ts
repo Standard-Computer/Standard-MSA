@@ -37,6 +37,7 @@ export function isValidDocumentSlug(raw: unknown): raw is string {
 export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   msa: "Master Service Agreement",
   "hipaa-baa": "HIPAA Business Associate Agreement",
+  "website-terms": "Website Terms of Use",
 };
 
 export function documentKindLabel(kind: string): string {

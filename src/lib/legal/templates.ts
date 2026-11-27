@@ -157,6 +157,62 @@ Accepted for the Covered Entity by {{signer_name}} on {{accepted_date}}.
 
 Questions about this BAA go to {{msp_name}} at {{msp_email}}.`;
 
+const WEBSITE_TERMS_BODY = `## Website Terms of Use
+
+These Terms of Use (these "Terms") govern access to and use of the website and any online resources made available by **{{msp_legal_name}}** ("{{msp_name}}", "we", "us" or "our") at {{msp_website}} (together, the "Site").
+
+### 1. Acceptance by Use
+
+1.1 These Terms take effect between {{msp_name}} and you the first time you access the Site. By accessing, browsing or otherwise using the Site, you confirm that you have read, understood and agree to be bound by these Terms as published at the time of your use.
+
+1.2 **Continued use of the Site constitutes acceptance of these Terms.** No signature, account or other affirmative step is required. If you do not agree to these Terms, your sole remedy is to stop using the Site.
+
+1.3 If you use the Site on behalf of a company or other organisation, you represent that you are authorised to bind it, and "you" includes that organisation.
+
+### 2. Changes to These Terms
+
+2.1 We may revise these Terms from time to time. Each published version carries its own version number and effective date, and the current version is always available on this page.
+
+2.2 Revisions take effect when published. Continued use of the Site after a revised version takes effect constitutes acceptance of the revision. If you do not agree to a revision, you must stop using the Site.
+
+### 3. Use of the Site
+
+3.1 You may use the Site only for lawful purposes and in accordance with these Terms.
+
+3.2 You must not attempt to gain unauthorised access to the Site or its related systems, interfere with its operation, introduce malicious code, or use automated means to copy or harvest material from the Site beyond what search engines are customarily permitted.
+
+### 4. Content and Intellectual Property
+
+4.1 The Site and its content are owned by {{msp_legal_name}} or its licensors and are protected by intellectual-property laws. We grant you a limited, revocable, non-exclusive licence to view the Site's content for your own informational purposes.
+
+4.2 Trademarks, logos and service names displayed on the Site are the property of their respective owners and may not be used without prior written consent.
+
+### 5. No Professional Advice
+
+5.1 Content on the Site is provided for general information only. It is not professional, legal, financial or technical advice, and you should not rely on it as such. Services we deliver to clients are governed by the separate written agreements under which those services are provided, not by these Terms.
+
+### 6. Third-Party Sites
+
+6.1 The Site may link to third-party websites. We do not control them and are not responsible for their content or practices; a link is not an endorsement.
+
+### 7. Disclaimer of Warranties
+
+7.1 THE SITE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING FITNESS FOR A PARTICULAR PURPOSE, ACCURACY AND NON-INFRINGEMENT. We do not warrant that the Site will be uninterrupted, secure or error-free.
+
+### 8. Limitation of Liability
+
+8.1 To the fullest extent permitted by law, {{msp_legal_name}} is not liable for any indirect, incidental or consequential damages, or for lost profits, revenue or data, arising out of or relating to your use of, or inability to use, the Site.
+
+8.2 Nothing in these Terms excludes or limits liability that cannot be excluded or limited by law.
+
+### 9. Governing Law
+
+9.1 These Terms are governed by the laws of {{venue}}, and the courts of {{venue}} have exclusive jurisdiction over disputes arising from them.
+
+### 10. Contact
+
+Questions about these Terms go to {{msp_name}} at {{msp_email}}.`;
+
 export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
   {
     slug: "msa",
@@ -179,6 +235,17 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       cure_period_days: "30",
     },
     bodyMarkdown: BAA_BODY,
+  },
+  // The no-known-client case (GH #22 / SHA-4505): website terms where
+  // continued use IS the acceptance. Unlike the two bilateral agreements
+  // above, this one deliberately uses NO client/signer tokens — there is no
+  // client to name — so it renders identically on every surface.
+  {
+    slug: "website-terms",
+    kind: "website-terms",
+    title: "Website Terms of Use",
+    variables: {},
+    bodyMarkdown: WEBSITE_TERMS_BODY,
   },
 ] as const;
 
