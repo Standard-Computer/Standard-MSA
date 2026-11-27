@@ -8,6 +8,9 @@ import {
   hashIp,
   isValidVisitId,
   purgeCutoff,
+  visitIpColumns,
+  visitIpSalt,
+  visitorColumns,
 } from "../../src/lib/visits/visits";
 import { VISIT_MAX_PING_SECONDS, VISIT_MAX_TOTAL_SECONDS } from "../../src/lib/visits/constants";
 import { csvCell, parseVisitFilters } from "../../src/lib/visits/query";
@@ -57,6 +60,75 @@ test("visitId is shape-checked", () => {
   assert.equal(isValidVisitId("short"), false);
   assert.equal(isValidVisitId("has spaces here!"), false);
   assert.equal(isValidVisitId(42), false);
+});
+
+// ── What a visit row keeps of the visitor (SHA-4497) ─────────────────────
+//
+// Sean's ruling in mail 4895: the default stays raw IP + timestamp, and the
+// operator's "store a salted hash instead" toggle stays. These tests are the
+// pin on that default — the ternary they cover used to be copy-pasted into
+// both visit writers, where a change to either would have moved the default
+// for half the visits with nothing failing.
+
+test("default (toggle off) stores the raw IP and no hash", () => {
+  assert.deepEqual(visitIpColumns("203.0.113.9", false, "salt"), {
+    ip: "203.0.113.9",
+    ipHash: null,
+  });
+});
+
+test("toggle on stores ONLY the salted hash — never the address too", () => {
+  const cols = visitIpColumns("203.0.113.9", true, "salt");
+  assert.equal(cols.ip, null);
+  assert.equal(cols.ipHash, hashIp("203.0.113.9", "salt"));
+  // The columns are exclusive on both branches: a row never carries the
+  // visitor's address twice, under either setting.
+  assert.ok(!(cols.ip !== null && cols.ipHash !== null));
+});
+
+test("no resolvable IP leaves both columns null, hashed or not", () => {
+  assert.deepEqual(visitIpColumns(null, false, "salt"), { ip: null, ipHash: null });
+  // Not sha256(salt + "") — an absent address must not become a stable
+  // pseudonym that every proxy-less visitor shares.
+  assert.deepEqual(visitIpColumns(null, true, "salt"), { ip: null, ipHash: null });
+});
+
+test("the salt falls back rather than silently storing raw IPs", () => {
+  const before = process.env.VISIT_IP_HASH_SALT;
+  try {
+    delete process.env.VISIT_IP_HASH_SALT;
+    assert.equal(visitIpSalt(), "standard-msa");
+    process.env.VISIT_IP_HASH_SALT = "operator-chosen";
+    assert.equal(visitIpSalt(), "operator-chosen");
+  } finally {
+    if (before === undefined) delete process.env.VISIT_IP_HASH_SALT;
+    else process.env.VISIT_IP_HASH_SALT = before;
+  }
+});
+
+test("visitorColumns derives UA, IP-or-hash and geo from headers alone", () => {
+  const get = headersOf({
+    "x-forwarded-for": "203.0.113.9, 10.0.0.1",
+    "user-agent": "Mozilla/5.0 (test)",
+    "cf-ipcountry": "us",
+  });
+  assert.deepEqual(visitorColumns(get, false, "salt"), {
+    userAgent: "Mozilla/5.0 (test)",
+    ip: "203.0.113.9",
+    ipHash: null,
+    country: "US",
+    region: null,
+  });
+  const hashed = visitorColumns(get, true, "salt");
+  assert.equal(hashed.ip, null);
+  assert.equal(hashed.ipHash, hashIp("203.0.113.9", "salt"));
+  // Geo survives hashing: it comes from the proxy's header, not the address.
+  assert.equal(hashed.country, "US");
+  // A hostile UA cannot grow the row without bound.
+  assert.equal(
+    visitorColumns(headersOf({ "user-agent": "x".repeat(900) }), false, "salt").userAgent?.length,
+    400,
+  );
 });
 
 test("hashIp is salted and stable", () => {
