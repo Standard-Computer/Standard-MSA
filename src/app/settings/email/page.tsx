@@ -2,10 +2,22 @@
 // key PRESENCE (never values), capability honesty for the chosen provider,
 // the send-test-email action, and the recent delivery log.
 
+import { Fragment } from "react";
 import { prisma } from "@/lib/db";
 import { getEmailConfig } from "@/lib/email/config";
 import { describeSecret } from "@/lib/email/redact";
 import { getProvider, listProviders } from "@/lib/email/registry";
+import {
+  envPinNote,
+  envPinnedSettings,
+  GETTING_STARTED_STEPS,
+  GETTING_STARTED_TITLE,
+  secretPresenceRows,
+  setupGuideFor,
+  SMTP_FIELDS_IGNORED_NOTE,
+  SMTP_FIELDSET_INTRO,
+  SMTP_FIELDSET_LEGEND,
+} from "@/lib/email/setupGuide";
 import { saveEmailSettings, sendTestEmailAction } from "./actions";
 import { requireOperator } from "@/lib/auth/page";
 
@@ -37,6 +49,33 @@ export default async function EmailSettingsPage({
       rowSettings = {};
     }
   }
+
+  // The provider the resolver would pick right now (env wins over the saved
+  // row), so the key-presence list can say which key THIS choice needs.
+  const effectiveSlug = state.configured
+    ? state.config.provider
+    : process.env.EMAIL_PROVIDER?.trim() || activeRow?.provider;
+
+  // Presence looked up here, not in setupGuide: that module never touches a
+  // secret value (describeSecret echoes length only, never the value).
+  const secretPresence = new Map<string, string>([
+    ["SMTP2GO_API_KEY", describeSecret(process.env.SMTP2GO_API_KEY)],
+    ["SENDGRID_API_KEY", describeSecret(process.env.SENDGRID_API_KEY)],
+    ["SMTP_PASSWORD", describeSecret(process.env.SMTP_PASSWORD)],
+    ["EMAIL_WEBHOOK_SECRET", describeSecret(process.env.EMAIL_WEBHOOK_SECRET)],
+  ]);
+
+  // Fields the environment pins (env wins over the saved row) — named so an
+  // operator stops saving values that silently do nothing. Names only.
+  const pinnedBy = new Map(envPinnedSettings(process.env).map((pin) => [pin.field, pin.envVar]));
+  const pinNote = (field: "provider" | "fromAddress" | "smtpHost" | "smtpPort" | "smtpUsername" | "smtpSecure") => {
+    const envVar = pinnedBy.get(field);
+    return envVar ? (
+      <p className="mt-1 text-xs text-amber-700">{envPinNote(envVar)}</p>
+    ) : null;
+  };
+
+  const smtpGuide = setupGuideFor("smtp");
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-16">
@@ -72,17 +111,38 @@ export default async function EmailSettingsPage({
             ) : null}
           </div>
         ) : (
-          <p className="mt-2 text-sm text-amber-700">Not configured: {state.reason}</p>
+          <div className="mt-2 text-sm">
+            <p className="text-amber-700">Not configured: {state.reason}</p>
+            <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-slate-700">
+              <p className="font-medium">{GETTING_STARTED_TITLE}</p>
+              <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+                {GETTING_STARTED_STEPS.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </div>
+          </div>
         )}
-        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm text-slate-600">
-          <dt>SMTP2GO_API_KEY</dt>
-          <dd>{describeSecret(process.env.SMTP2GO_API_KEY)}</dd>
-          <dt>SENDGRID_API_KEY</dt>
-          <dd>{describeSecret(process.env.SENDGRID_API_KEY)}</dd>
-          <dt>SMTP_PASSWORD</dt>
-          <dd>{describeSecret(process.env.SMTP_PASSWORD)}</dd>
-          <dt>EMAIL_WEBHOOK_SECRET</dt>
-          <dd>{describeSecret(process.env.EMAIL_WEBHOOK_SECRET)}</dd>
+        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm text-slate-600">
+          {secretPresenceRows(effectiveSlug).map((row) => (
+            <Fragment key={row.envVar}>
+              <dt>
+                <code>{row.envVar}</code>
+              </dt>
+              <dd>
+                {secretPresence.get(row.envVar)}
+                <span
+                  className={
+                    row.requiredForCurrent
+                      ? "ml-2 font-medium text-slate-900"
+                      : "ml-2 text-slate-400"
+                  }
+                >
+                  {row.note}
+                </span>
+              </dd>
+            </Fragment>
+          ))}
         </dl>
       </section>
 
@@ -102,6 +162,7 @@ export default async function EmailSettingsPage({
                 </option>
               ))}
             </select>
+            {pinNote("provider")}
           </label>
           <label className="block">
             From address
@@ -112,16 +173,27 @@ export default async function EmailSettingsPage({
               placeholder="msa@your-msp.example"
               className="mt-1 block w-full rounded border border-slate-300 p-2"
             />
+            {pinNote("fromAddress")}
           </label>
           <fieldset className="rounded border border-slate-200 p-3">
-            <legend className="px-1 text-slate-500">SMTP only</legend>
-            <label className="block">
+            <legend className="px-1 font-medium text-slate-700">{SMTP_FIELDSET_LEGEND}</legend>
+            <p className="text-slate-600">{SMTP_FIELDSET_INTRO}</p>
+            <p className="mt-1 text-slate-500">{SMTP_FIELDS_IGNORED_NOTE}</p>
+            {smtpGuide ? (
+              <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-slate-600">
+                {smtpGuide.steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            ) : null}
+            <label className="mt-3 block">
               Host
               <input
                 name="smtpHost"
                 defaultValue={typeof rowSettings.smtpHost === "string" ? rowSettings.smtpHost : ""}
                 className="mt-1 block w-full rounded border border-slate-300 p-2"
               />
+              {pinNote("smtpHost")}
             </label>
             <div className="mt-2 flex gap-4">
               <label className="block flex-1">
@@ -131,6 +203,7 @@ export default async function EmailSettingsPage({
                   defaultValue={typeof rowSettings.smtpPort === "number" ? String(rowSettings.smtpPort) : "587"}
                   className="mt-1 block w-full rounded border border-slate-300 p-2"
                 />
+                {pinNote("smtpPort")}
               </label>
               <label className="block flex-1">
                 Username
@@ -139,6 +212,7 @@ export default async function EmailSettingsPage({
                   defaultValue={typeof rowSettings.smtpUsername === "string" ? rowSettings.smtpUsername : ""}
                   className="mt-1 block w-full rounded border border-slate-300 p-2"
                 />
+                {pinNote("smtpUsername")}
               </label>
             </div>
             <label className="mt-2 block">
@@ -150,8 +224,12 @@ export default async function EmailSettingsPage({
               />
               Implicit TLS (port 465)
             </label>
-            <p className="mt-2 text-slate-500">
+            {pinNote("smtpSecure")}
+            <p className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 font-medium text-amber-900">
               The SMTP password comes from <code>SMTP_PASSWORD</code> in the environment.
+              {smtpGuide?.blockingNote ? (
+                <span className="mt-1 block font-normal text-amber-800">{smtpGuide.blockingNote}</span>
+              ) : null}
             </p>
           </fieldset>
           <button type="submit" className="rounded bg-slate-900 px-4 py-2 text-white">
