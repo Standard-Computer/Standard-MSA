@@ -61,9 +61,51 @@ healthcheck, replica count, restart policy) and nothing else.
 | Source | `Standard-Computer/Standard-MSA`, branch `main` | — |
 | Builder | Dockerfile (from `railway.json`) | The repo's own image; Nixpacks would miss the Prisma CLI staging |
 | Volume | 1 GB mounted at `/app/data` | §1 |
-| Public domain | **Generate a domain** | Without it the service is Unexposed and there is no front end to reach — this is why nothing was visible on the first attempt |
+| Public domain | **Generate a domain**, **target port `8080`** | Without it the service is Unexposed and there is no front end to reach — this is why nothing was visible on the first attempt. The target port is **not** `3000`; see §2.1 |
 | Healthcheck | `/api/health` (from `railway.json`) | The one path that answers `200` in every state; `/` and `/login` redirect on an unclaimed instance |
 | Replicas | 1 (from `railway.json`) | §1 |
+
+### 2.1 The public domain's target port is `8080`, not `3000`
+
+When Railway generates a domain it asks which container port to route to. The
+answer is **`8080`** — the value Railway injects as `PORT` — and getting this
+wrong is the one settings mistake that produces a dead URL on a deploy that
+reports SUCCESS.
+
+**The app binds `PORT`; it does not listen on a fixed port.** Next.js
+standalone output reads `process.env.PORT` in `server.js` and falls back to
+`3000` only when nothing is set. Railway always sets it, so on Railway the app
+is listening on the injected value — **`8080` on the live deploy** (`main`
+`990ffd40`, deployment `3609031f`). That deploy predates this lane, so its `/`
+answered a `307` to `/login` rather than the `303` to `/setup` in §5 step 3;
+what matters here is that it answered *at all*, which is the proof the routing
+was pointed at the right port. `3000` is what the fallback produces, and the
+fallback is the `docker compose` path, not this one.
+
+**`EXPOSE 3000` in the `Dockerfile` is not the answer either.** `EXPOSE` binds
+nothing and configures nothing — it is image metadata, there to match what
+`docker-compose.yml` publishes. Railway does not read it to pick a target port,
+and its `3000` is the most likely thing to mislead someone filling in this
+field. The comment above that line says so.
+
+So, for a template consumer, in order of how easy each is to get wrong:
+
+| Do | Don't |
+|---|---|
+| Set the generated domain's target port to **`8080`** | Don't set it to `3000` because the Dockerfile says `EXPOSE 3000` |
+| Leave `PORT` **unset** as a variable so Railway's injected value stands | Don't add `PORT=3000` by hand — that makes the app listen on `3000` and the `8080` target port then breaks instead |
+
+Both columns have to agree: the port the app listens on is whatever `PORT`
+holds, and the domain's target port must be that same number. The supported
+combination for this template is *Railway injects `PORT`* + *target port
+`8080`*.
+
+**The symptom when they disagree** is why this section is worth its length: the
+build succeeds, the deploy goes SUCCESS, the log shows Next.js `✓ Ready`, and
+the public URL still answers `502` — because the edge is routing to a port
+nothing is listening on. There is nothing in the deploy log to read. If a
+fresh deploy's `/` answers `502` instead of a redirect, check this field before
+anything else.
 
 ### Variables
 
@@ -71,7 +113,7 @@ healthcheck, replica count, restart policy) and nothing else.
 |---|---|---|
 | `DATABASE_URL` | `file:/app/data/standard-msa.db` | **Yes** — the entrypoint refuses to start without it, by design |
 | `APP_BASE_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` | **Yes** — see below |
-| `PORT` | *(leave unset)* | Railway injects it; `server.js` honours it |
+| `PORT` | *(leave unset)* | Railway injects it (`8080`) and `server.js` honours it. Leave it unset, and match the public domain's target port to it — §2.1 |
 
 `APP_BASE_URL` matters more than it looks. It is the base for the links in
 sent agreements and the `/legal` embed, and it is what decides whether the
@@ -92,7 +134,8 @@ Settings screens or in variables the operator adds later: email provider keys,
 
 1. Railway → the configured project → **Settings → Publish as template**.
 2. Confirm the template carries: the service, the 1 GB `/app/data` volume, the
-   two variables above, and a generated domain.
+   two variables above, and a generated domain **whose target port is `8080`**
+   (§2.1) with no `PORT` variable set.
 3. The kickback is attached to the publishing account (Sean's), and the
    referral code goes in the button URL below.
 4. Deploy the published template once into a fresh project and run the
@@ -158,8 +201,10 @@ Run against a **fresh** deploy of the published template:
    `No pending migrations to apply`) and then Next.js `✓ Ready`. No
    `DATABASE_URL is not set`, no `NOTE this path is not a mounted volume`.
 2. **Health.** `curl -i https://<domain>/api/health` → `200`, `{"ok":true}`.
-3. **Front end.** `GET https://<domain>/` → `303` to `/setup`; `/setup` serves
-   the form. (Before this lane, `/` served nothing: the service had no domain.)
+3. **Front end.** `GET https://<domain>/` → `303` to `/setup` (`guard.ts:82`);
+   `/setup` serves the form. (Before this lane, `/` served nothing: the service
+   had no domain.) A `502` here is the target-port mistake in §2.1, not a build
+   failure — the app is up and the edge is routing to the wrong port.
 4. **Setup.** Submit a 12+ character password → redirected to `/onboarding`,
    signed in.
 5. **Setup closes.** Reopen `/setup` → redirected to `/login`.

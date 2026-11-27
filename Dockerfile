@@ -32,6 +32,12 @@ ENV NODE_ENV=production
 # platform leaving HOSTNAME alone (SHA-4378).
 # PORT needs no default: server.js already falls back to 3000, which is what
 # EXPOSE and docker-compose.yml publish. Platforms that inject PORT win.
+#
+# So the EXPOSE below is the COMPOSE number, and it is not what the app listens
+# on anywhere PORT is injected — Railway injects 8080. EXPOSE binds nothing and
+# configures nothing; it is image metadata. Do not read it as the port to route
+# a Railway public domain at: that target port must be the injected PORT
+# (8080), not 3000. docs/RAILWAY-TEMPLATE.md §2.1 (SHA-4467).
 ENV HOSTNAME=0.0.0.0
 # Standalone output: server.js + minimal node_modules, no full install.
 COPY --from=build /app/.next/standalone ./
