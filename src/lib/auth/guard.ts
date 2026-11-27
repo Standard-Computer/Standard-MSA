@@ -2,13 +2,15 @@
 //
 // Takes a Request and answers with a refusal or nothing, so a route handler
 // guards itself in one line and a test can prove the refusal by calling the
-// real handler with a real Request. Nothing here imports next/headers or
-// Prisma: the gate must be callable from anywhere a Request exists.
+// real handler with a real Request. Nothing here imports next/headers, and
+// Prisma only arrives through ./gate.ts's dynamic import on an instance that
+// has no OPERATOR_PASSWORD: the gate must be callable from anywhere a
+// Request exists.
 //
 // The companion for server components and server actions — which have no
 // Request to hand — is ./page.ts.
 
-import { operatorAuth, type OperatorAuthState } from "./config";
+import { gateSessionSecret, operatorGate, SETUP_PATH, type OperatorGate } from "./gate";
 import { OPERATOR_COOKIE, readCookie, verifySession } from "./session";
 import { classifyPath } from "./surfaces";
 
@@ -31,10 +33,16 @@ export function loginUrlFor(pathname: string): string {
 /** Does this cookie header carry a session this instance issued? */
 export async function hasOperatorSession(
   cookieHeader: string | null | undefined,
-  state: OperatorAuthState = operatorAuth(),
+  gate?: OperatorGate,
 ): Promise<boolean> {
-  if (!state.configured) return false;
-  return verifySession(readCookie(cookieHeader, OPERATOR_COOKIE), state.password);
+  const secret = gateSessionSecret(gate ?? (await operatorGate()));
+  // Not a secret comparison — it is "can anyone sign in on this instance at
+  // all", a null check on a value whose contents are never inspected here.
+  // The timing rule applies to the signature check below, which goes through
+  // crypto.subtle.verify (src/lib/auth/session.ts).
+  // eslint-disable-next-line security/detect-possible-timing-attacks
+  if (secret === null) return false;
+  return verifySession(readCookie(cookieHeader, OPERATOR_COOKIE), secret);
 }
 
 /**
@@ -54,17 +62,37 @@ export async function guardOperatorRequest(req: Request): Promise<Response | nul
   const surface = classifyPath(pathname);
   if (surface.kind !== "operator") return null;
 
-  const state = operatorAuth();
-  if (!state.configured) {
+  const gate = await operatorGate();
+
+  if (gate.kind === "closed") {
     // Fails closed, and says what to fix. The reason names the env var, never
     // a value (src/lib/auth/config.ts).
-    return new Response(`${state.reason}\n`, {
+    return new Response(`${gate.reason}\n`, {
       status: 503,
       headers: { ...REFUSAL_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
     });
   }
 
-  if (await hasOperatorSession(req.headers.get("cookie"), state)) return null;
+  if (gate.kind === "setup") {
+    // Nobody has claimed this instance. A browser is sent to the first-boot
+    // screen; a download or API-shaped surface gets a 503, because a 303 to
+    // an HTML form is not an answer a non-browser caller can use.
+    if (surface.refusal === "redirect") {
+      return new Response(null, {
+        status: 303,
+        headers: { ...REFUSAL_HEADERS, Location: SETUP_PATH },
+      });
+    }
+    return new Response(
+      "This instance has no operator password yet. Open it in a browser to set one.\n",
+      {
+        status: 503,
+        headers: { ...REFUSAL_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
+      },
+    );
+  }
+
+  if (await hasOperatorSession(req.headers.get("cookie"), gate)) return null;
 
   if (surface.refusal === "redirect") {
     return new Response(null, {

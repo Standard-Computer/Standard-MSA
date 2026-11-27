@@ -154,7 +154,13 @@ test("the login redirect target is encoded, not interpolated", async () => {
   assert.equal(location.split("?")[1].split("&").length, 1);
 });
 
-test("with no password configured the gate closes, and names the fix", async () => {
+test("with no password and no readable database the gate closes", async () => {
+  // Since SHA-4455 an unset OPERATOR_PASSWORD is no longer the end of the
+  // question — the gate also asks the database whether this instance was
+  // claimed through the first-boot screen. This process has no DATABASE_URL,
+  // so that read FAILS, and the fail-closed rule applies: an unreadable
+  // database is not an unclaimed instance, and must not open /setup on an
+  // instance somebody already owns (src/lib/auth/gate.ts).
   delete process.env.OPERATOR_PASSWORD;
   try {
     for (const path of [...SCREENS, ...DOWNLOADS]) {
@@ -162,7 +168,12 @@ test("with no password configured the gate closes, and names the fix", async () 
       assert.ok(refusal, `${path} must be refused`);
       assert.equal(refusal.status, 503, `${path} must fail closed, not open`);
       const body = await refusal.text();
-      assert.ok(body.includes("OPERATOR_PASSWORD"), "the refusal names what to set");
+      assert.ok(body.includes("DATABASE_URL"), "the refusal names what to fix");
+      assert.equal(
+        body.includes("/setup"),
+        false,
+        "a closed gate must not advertise first boot",
+      );
     }
     // And a session minted earlier does not survive the password going away.
     const cookie = `${OPERATOR_COOKIE}=${await mintSession(PASSWORD)}`;
@@ -171,6 +182,31 @@ test("with no password configured the gate closes, and names the fix", async () 
     assert.equal(refusal.status, 503);
     // The public surfaces still work — an unconfigured gate must not take
     // the recipients' own agreement links down with it.
+    for (const path of PUBLIC) {
+      assert.equal(await guardOperatorRequest(get(path)), null, `${path} must stay open`);
+    }
+  } finally {
+    process.env.OPERATOR_PASSWORD = PASSWORD;
+  }
+});
+
+test("a too-short OPERATOR_PASSWORD closes the gate and names the variable", async () => {
+  // The misconfiguration case, and the one that must NOT reach first boot:
+  // somebody configured this instance and got it wrong, so reopening /setup
+  // would hand their instance to the next passer-by.
+  // A value with no substring in common with the refusal text, so the
+  // "never quotes the value" assertion cannot pass or fail by accident.
+  const TOO_SHORT = "zqx9v";
+  process.env.OPERATOR_PASSWORD = TOO_SHORT;
+  try {
+    for (const path of [...SCREENS, ...DOWNLOADS]) {
+      const refusal = await guardOperatorRequest(get(path));
+      assert.ok(refusal, `${path} must be refused`);
+      assert.equal(refusal.status, 503, `${path} must fail closed, not open`);
+      const body = await refusal.text();
+      assert.ok(body.includes("OPERATOR_PASSWORD"), "the refusal names what to set");
+      assert.equal(body.includes(TOO_SHORT), false, "and never quotes the value");
+    }
     for (const path of PUBLIC) {
       assert.equal(await guardOperatorRequest(get(path)), null, `${path} must stay open`);
     }

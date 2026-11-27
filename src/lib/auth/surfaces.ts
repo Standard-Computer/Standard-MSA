@@ -54,6 +54,15 @@ export const SURFACES: readonly Surface[] = [
     because: "The sign-in screen itself. Renders no operator data.",
   },
   {
+    pattern: "/setup",
+    kind: "public",
+    because:
+      "First boot (SHA-4455). Necessarily reachable without a session — it is " +
+      "where the first session comes from — and it closes itself the moment a " +
+      "credential exists, enforced by the database, not by this entry " +
+      "(src/lib/auth/credential.ts). Renders no operator data.",
+  },
+  {
     pattern: "/msa/**",
     kind: "public",
     because:
@@ -72,6 +81,15 @@ export const SURFACES: readonly Surface[] = [
   },
 
   // ── Machine callers: credential carried in the request ────────────────────
+  {
+    pattern: "/api/health",
+    kind: "machine",
+    because:
+      "Liveness probe for a platform healthcheck (SHA-4455). Carries no " +
+      "credential by design and needs none: it returns a fixed {\"ok\":true} " +
+      "and reveals nothing about this instance — no version, no state, no " +
+      "data. See src/app/api/health/route.ts.",
+  },
   {
     pattern: "/api/cron/**",
     kind: "machine",

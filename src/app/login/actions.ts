@@ -11,8 +11,14 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { operatorAuth, secureCookies } from "@/lib/auth/config";
-import { equalSecrets, mintSession, OPERATOR_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth/session";
+import { secureCookies } from "@/lib/auth/config";
+import {
+  gateSessionSecret,
+  operatorGate,
+  SETUP_PATH,
+  verifyOperatorPassword,
+} from "@/lib/auth/gate";
+import { mintSession, OPERATOR_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth/session";
 import { safeRedirectTarget } from "@/lib/auth/surfaces";
 import { clearFailedLogins, noteFailedLogin, throttleRemainingMs } from "@/lib/auth/throttle";
 import { clientIpFrom } from "@/lib/visits/visits";
@@ -26,8 +32,12 @@ function back(target: string, error: LoginError): never {
 
 export async function loginAction(formData: FormData): Promise<void> {
   const target = safeRedirectTarget(formData.get("next"), "/");
-  const state = operatorAuth();
-  if (!state.configured) back(target, "unconfigured");
+  const gate = await operatorGate();
+  // An unclaimed instance has no password to check against: send them to
+  // first boot rather than tell them their guess was wrong (SHA-4455).
+  if (gate.kind === "setup") redirect(SETUP_PATH);
+  const sessionSecret = gateSessionSecret(gate);
+  if (sessionSecret === null) back(target, "unconfigured");
 
   const password = formData.get("password");
   if (typeof password !== "string" || password === "") back(target, "missing");
@@ -39,14 +49,14 @@ export async function loginAction(formData: FormData): Promise<void> {
   // signal — and costs no further work — per attempt.
   if (throttleRemainingMs(ip) > 0) back(target, "throttled");
 
-  if (!(await equalSecrets(password, state.password))) {
+  if (!(await verifyOperatorPassword(gate, password))) {
     noteFailedLogin(ip);
     back(target, "invalid");
   }
 
   clearFailedLogins(ip);
   const jar = await cookies();
-  jar.set(OPERATOR_COOKIE, await mintSession(state.password), {
+  jar.set(OPERATOR_COOKIE, await mintSession(sessionSecret), {
     httpOnly: true,
     sameSite: "lax",
     secure: secureCookies(),
