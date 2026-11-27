@@ -4,7 +4,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { AA_NORMAL, AAA_NORMAL, contrast, ratio } from "./_contrast";
-import { READABLE_SLATE_TEXT } from "../../tailwind.config";
+import tailwindConfig, { READABLE_SLATE_TEXT } from "../../tailwind.config";
 import { embedCss, embedDocumentHtml } from "../../src/lib/legal/embedDocument";
 import {
   asEmbedTheme,
@@ -126,6 +126,34 @@ test("every slate shade used for text clears AA on white, and the body tier is n
   ]) {
     assert.ok(shade in READABLE_SLATE_TEXT, `textColor.slate dropped shade ${shade}`);
   }
+});
+
+test("the ramp is wired under textColor, never under colors", () => {
+  // Scope matters as much as the values. Under `theme.extend.colors` the same
+  // object would also repaint `disabled:bg-slate-400` on three submit buttons
+  // (near-black reads as ENABLED) and `focus:border-slate-500`. Both still
+  // want stock slate, so this must stay a text-only override.
+  const extend = tailwindConfig.theme?.extend as
+    | { textColor?: { slate?: Record<string, string> }; colors?: unknown }
+    | undefined;
+
+  assert.equal(
+    extend?.textColor?.slate,
+    READABLE_SLATE_TEXT,
+    "the readable ramp must be wired into theme.extend.textColor.slate",
+  );
+  assert.equal(
+    extend?.colors,
+    undefined,
+    "theme.extend.colors must stay empty — a slate override there would " +
+      "repaint disabled:bg-slate-400 and focus:border-slate-500 too",
+  );
+
+  // The non-text utilities that depend on stock slate. If one of these
+  // disappears the scoping argument above needs revisiting, not deleting.
+  const markup = SRC_FILES.map((f) => read(f)).join("\n");
+  assert.match(markup, /disabled:bg-slate-400/, "the disabled-button case this scoping protects");
+  assert.match(markup, /focus:border-slate-500/, "the focus-ring case this scoping protects");
 });
 
 test("no source file uses a slate text shade the ramp does not define", () => {
