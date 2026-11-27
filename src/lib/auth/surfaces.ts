@@ -59,8 +59,11 @@ export const SURFACES: readonly Surface[] = [
     because:
       "First boot (SHA-4455). Necessarily reachable without a session — it is " +
       "where the first session comes from — and it closes itself the moment a " +
-      "credential exists, enforced by the database, not by this entry " +
-      "(src/lib/auth/credential.ts). Renders no operator data.",
+      "credential exists. What closes it is requireUnclaimed() " +
+      "(src/lib/auth/gate.ts), asked by the screen, by its action, and by " +
+      "claimOperatorPassword() itself, with the credential table's fixed " +
+      "primary key as the backstop under all three. Not enforced by this " +
+      "entry. Renders no operator data.",
   },
   {
     pattern: "/msa/**",

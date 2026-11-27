@@ -85,6 +85,26 @@ export function gateAcceptsSignIn(gate: OperatorGate): boolean {
 }
 
 /**
+ * May a first-boot claim proceed on this instance right now?
+ *
+ * True only for `setup` — a claimed, env-configured or unreadable instance all
+ * answer false, which is the fail-closed order resolveGate() already fixes.
+ *
+ * This exists as a NAMED helper rather than an inline `kind !== "setup"` for
+ * two reasons, both from the independent review of this lane (SHA-4458):
+ *
+ *   1. `/setup` is a `public` surface, so it has no requireOperator() call for
+ *      tests/auth/coverage.test.ts to match on. This is the thing that plays
+ *      that part, and the guardrail matches on this name.
+ *   2. It gives the invariant one spelling, so the screen (src/app/setup),
+ *      the action and claimOperatorPassword() (./credential.ts) are provably
+ *      asking the same question rather than three similar ones.
+ */
+export async function requireUnclaimed(): Promise<boolean> {
+  return (await operatorGate()).kind === "setup";
+}
+
+/**
  * Is `submitted` this instance's operator password?
  *
  * False on a gate nobody can sign in through, so a caller cannot accidentally

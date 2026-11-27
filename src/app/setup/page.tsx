@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/config";
-import { operatorGate } from "@/lib/auth/gate";
+import { requireUnclaimed } from "@/lib/auth/gate";
 import { setupAction, type SetupError } from "./actions";
 
 // First boot (SHA-4455). The one screen that exists so a one-click deploy can
@@ -23,7 +23,9 @@ const ERRORS: Record<SetupError, string> = {
   missing: "Type a password.",
   "too-short": `That password is shorter than ${MIN_PASSWORD_LENGTH} characters.`,
   mismatch: "The two passwords do not match.",
-  "already-set": "This instance already has an operator password. Sign in instead.",
+  // No "already-set" entry: an already-claimed instance redirects to
+  // /login?error=already-claimed, because this page redirects a non-`setup`
+  // gate away before it renders anything (SHA-4458 review, non-blocking 1).
   unavailable: "This instance could not save the password. Check its logs and try again.",
 };
 
@@ -36,10 +38,10 @@ export default async function SetupPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const gate = await operatorGate();
+  const unclaimed = await requireUnclaimed();
   // Claimed, env-configured or closed: there is no first boot to do. Sending
   // them to /login tells them nothing they could not learn by visiting it.
-  if (gate.kind !== "setup") redirect("/login");
+  if (!unclaimed) redirect("/login");
 
   const { error } = await searchParams;
 

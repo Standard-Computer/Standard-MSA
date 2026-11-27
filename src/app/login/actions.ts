@@ -24,7 +24,18 @@ import { clearFailedLogins, noteFailedLogin, throttleRemainingMs } from "@/lib/a
 import { clientIpFrom } from "@/lib/visits/visits";
 
 /** The error codes the login screen knows how to render. */
-export type LoginError = "unconfigured" | "invalid" | "throttled" | "missing";
+export type LoginError =
+  | "unconfigured"
+  | "invalid"
+  | "throttled"
+  | "missing"
+  /**
+   * Sent here by /setup, not by this file: a first-boot claim that arrived at
+   * an instance somebody else had already claimed. The one case where the
+   * person reading it needs to know more than "that password is not correct"
+   * (SHA-4455 / SHA-4458).
+   */
+  | "already-claimed";
 
 function back(target: string, error: LoginError): never {
   redirect(`/login?next=${encodeURIComponent(target)}&error=${error}`);

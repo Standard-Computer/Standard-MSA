@@ -152,6 +152,116 @@ test("on an unclaimed instance the guard sends browsers to /setup and serves no 
   assert.match(afterClaim.headers.get("location") ?? "", /^\/login\?next=/);
 });
 
+// ── The refusal itself, asserted on the library rather than on the screen ───
+//
+// These five exist because the independent review of this lane (SHA-4458)
+// planted mutants in the changed code and found one that nothing caught:
+// deleting the gate check from the setup action left 360/360 green, `tsc`
+// clean and `eslint` clean. The reason no test saw it is that /setup is a
+// `public` surface, so the "every action calls the guard" rule in
+// tests/auth/coverage.test.ts does not apply to it by design.
+//
+// So the invariant now lives in claimOperatorPassword(), where it can be
+// asserted with no Next request scope — and these are the assertions.
+
+test("requireUnclaimed() is true only on an instance nobody has claimed", async () => {
+  await prisma.operatorCredential.deleteMany();
+  assert.equal(await gate.requireUnclaimed(), true, "an empty table is claimable");
+
+  await credential.claimOperatorPassword(FIRST);
+  assert.equal(await gate.requireUnclaimed(), false, "a claimed instance is not");
+
+  process.env.OPERATOR_PASSWORD = "an-env-operator-password";
+  try {
+    assert.equal(await gate.requireUnclaimed(), false, "an env-configured instance is not");
+  } finally {
+    delete process.env.OPERATOR_PASSWORD;
+  }
+
+  process.env.OPERATOR_PASSWORD = "short";
+  try {
+    assert.equal(await gate.requireUnclaimed(), false, "a MISCONFIGURED instance is not");
+  } finally {
+    delete process.env.OPERATOR_PASSWORD;
+  }
+});
+
+test("claimOperatorPassword refuses a claimed instance on its own", async () => {
+  // The same refusal as the test above, reached without going through the
+  // action: remove the check from the library and this fails.
+  await prisma.operatorCredential.deleteMany();
+  assert.equal((await credential.claimOperatorPassword(FIRST)).claimed, true);
+
+  const second = await credential.claimOperatorPassword(SECOND);
+  assert.deepEqual(second, { claimed: false, reason: "already-set" });
+  assert.equal(await prisma.operatorCredential.count(), 1);
+
+  const live = await gate.operatorGate();
+  assert.equal(await gate.verifyOperatorPassword(live, FIRST), true, "the first password still works");
+  assert.equal(await gate.verifyOperatorPassword(live, SECOND), false, "the second never took effect");
+});
+
+test("an env-configured instance cannot be claimed, and no row is written", async () => {
+  // THE one the primary key cannot catch, and the reason the check has to
+  // exist at all: with OPERATOR_PASSWORD set the credential table is empty,
+  // so a claim has nothing to collide with. Without the gate check this
+  // writes a stranger's credential and returns { claimed: true }.
+  await prisma.operatorCredential.deleteMany();
+  process.env.OPERATOR_PASSWORD = "an-env-operator-password";
+  try {
+    const outcome = await credential.claimOperatorPassword("a-stranger-password");
+    assert.deepEqual(outcome, { claimed: false, reason: "already-set" });
+    assert.equal(
+      await prisma.operatorCredential.count(),
+      0,
+      "an env-configured instance must not acquire a stored credential",
+    );
+  } finally {
+    delete process.env.OPERATOR_PASSWORD;
+  }
+
+  // And the consequence that made it worth blocking the PR over: removing the
+  // env var must leave first boot OPEN, not hand the instance to whoever
+  // posted the form while it was set. OPERATOR_PASSWORD is documented as the
+  // recovery route, so this is the state an operator recovers INTO.
+  assert.equal((await gate.operatorGate()).kind, "setup");
+  assert.equal(await gate.requireUnclaimed(), true);
+});
+
+test("a closed instance cannot be claimed either", async () => {
+  // Fail-closed, not fail-claimable: a present-but-rejected OPERATOR_PASSWORD
+  // is a deliberate misconfiguration, so it must not reopen first boot.
+  await prisma.operatorCredential.deleteMany();
+  process.env.OPERATOR_PASSWORD = "short";
+  try {
+    assert.equal((await gate.operatorGate()).kind, "closed");
+    assert.deepEqual(await credential.claimOperatorPassword("a-stranger-password"), {
+      claimed: false,
+      reason: "already-set",
+    });
+    assert.equal(await prisma.operatorCredential.count(), 0);
+  } finally {
+    delete process.env.OPERATOR_PASSWORD;
+  }
+});
+
+test("a refused claim costs no PBKDF2 derivation", async () => {
+  // Why this is an assertion and not a comment: the refusal is only cheap
+  // while it is resolved BEFORE hashPassword(). Reorder those two lines and
+  // /setup becomes an anonymous 105 ms CPU cost on a public URL.
+  await prisma.operatorCredential.deleteMany();
+  await credential.claimOperatorPassword(FIRST);
+
+  const started = process.hrtime.bigint();
+  await credential.claimOperatorPassword(SECOND);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+  // One real derivation measures ~105 ms on CI; a database round trip on a
+  // temp-file SQLite is sub-millisecond. 40 ms separates them by a wide
+  // margin in both directions.
+  assert.ok(elapsedMs < 40, `a refused claim must not hash: took ${elapsedMs.toFixed(1)} ms`);
+});
+
 test("OPERATOR_PASSWORD wins over a stored credential, and restores it when removed", async () => {
   await credential.claimOperatorPassword(FIRST);
   const envPassword = "an-env-operator-password";

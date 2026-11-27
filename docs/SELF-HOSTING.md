@@ -29,8 +29,15 @@ docker compose up -d --build
 
 That is the whole install. On boot the container runs
 `prisma migrate deploy` (so the database file is created and migrated
-before the server starts) and then serves the app on port 3000. The
-`msa-data` volume holds the SQLite file across restarts and upgrades.
+before the server starts) and then serves the app on the port `PORT` names,
+falling back to **3000** when it is unset — which is the case here, and is
+what `docker-compose.yml` publishes. The `msa-data` volume holds the SQLite
+file across restarts and upgrades.
+
+On a platform that injects `PORT` the app listens on that value instead; the
+3000 in this section is the compose default, not a fixed port. Railway injects
+`8080`, and there the public domain's target port must be `8080` too — see
+[`docs/RAILWAY-TEMPLATE.md`](RAILWAY-TEMPLATE.md) §2.1.
 
 First visit: open `http://your-host:3000`. If you set `OPERATOR_PASSWORD` in
 `.env`, sign in with it; if you left it blank, you get a one-time setup
@@ -49,7 +56,7 @@ One password opens every operator screen. There are two ways to set it and
 2. **The first-boot `/setup` screen.** Leave `OPERATOR_PASSWORD` unset and the
    first visit to any operator screen redirects to `/setup`, which takes a
    password of at least 12 characters, stores it hashed (PBKDF2-SHA256,
-   600 000 iterations, per-instance salt), signs you in, and then closes
+   600 000 iterations, per-row salt), signs you in, and then closes
    itself for good. This is what the one-click Railway deploy uses, where
    there is no shell in which to set a variable.
 
@@ -59,9 +66,11 @@ Things worth knowing about option 2:
   already reachable from the internet, open it the moment the deploy is
   green. Until it is claimed nobody can sign in — but nor is the claim
   reserved for you.
-- It can only happen **once per database**. A second submission, a second
-  person or a second replica is refused by a primary-key constraint, not by
-  a check that could be raced.
+- It can only happen **once per instance**. A second submission, a second
+  person or a second replica is refused twice over: the claim re-checks that
+  this instance is unclaimed before it writes anything, and the write itself
+  is a single row on a fixed primary key, so even a claim that loses the
+  check-then-write race loses it harmlessly rather than overwriting.
 - `OPERATOR_PASSWORD` **always wins** if it is set, which is also the
   recovery route if the stored password is lost: set the variable, restart,
   sign in.
@@ -125,7 +134,8 @@ is stored the way a password is, hashed and salted, and never as plaintext.
 
 ### Running it on a platform (Railway, Fly, Render, a VPS)
 
-The same image runs anywhere. Railway has a published one-click template —
+The same image runs anywhere. Railway is the intended one-click path, and the
+template is not published yet —
 see [`RAILWAY-TEMPLATE.md`](RAILWAY-TEMPLATE.md), which also documents the
 settings any other platform needs: a persistent volume at `/app/data`, a
 `DATABASE_URL` pointing into it, `APP_BASE_URL` set to the public domain,

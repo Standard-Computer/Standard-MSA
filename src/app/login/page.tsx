@@ -24,6 +24,9 @@ const ERRORS: Record<LoginError, string> = {
   missing: "That password is not correct.",
   throttled: "Too many attempts. Wait a few minutes and try again.",
   unconfigured: "This instance has no operator password set.",
+  "already-claimed":
+    "This instance already has an operator password — someone completed first-boot " +
+    "setup before you did. Sign in with it, or redeploy if that was not you.",
 };
 
 function isLoginError(value: unknown): value is LoginError {

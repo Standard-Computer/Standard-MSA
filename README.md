@@ -40,9 +40,15 @@ it runs in production.
 
 ## Deploy it in one click
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/standard-msa)
+> **The template is not published yet, so there is no button here on purpose.**
+> A `railway.com/template/...` link only exists once the template is published
+> from the owner's Railway account, and that code is not issued yet
+> (`docs/RAILWAY-TEMPLATE.md` § 4). An image linking to a URL that returns 404
+> is worse than no button: it is the first thing a visitor clicks, and on a
+> public repo an unregistered template slug is one somebody else can register.
+> This paragraph becomes the button the day the code exists.
 
-You get the app, a 1 GB volume for its database, and a public URL. Open that
+You will get the app, a 1 GB volume for its database, and a public URL. Open that
 URL and the first screen asks you to set an operator password — **no default
 credentials ship with this**, so there is nothing to forget to change. One MSA
 tool per deploy.

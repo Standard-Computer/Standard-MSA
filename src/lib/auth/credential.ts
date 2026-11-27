@@ -15,9 +15,11 @@
 //   1. Env WINS. With OPERATOR_PASSWORD set, nothing here is consulted — the
 //      self-hoster's install behaves exactly as before, and an operator who
 //      loses the stored password recovers by setting the env var.
-//   2. The setup screen is only open while there is NO credential at all, and
-//      the claim is a single INSERT on a fixed primary key, so "first boot"
-//      is enforced by the database rather than by a check-then-write race.
+//   2. The setup screen is only open while there is NO credential at all.
+//      claimOperatorPassword() resolves the gate itself and refuses anything
+//      that is not `setup`, and the write underneath it is a single INSERT on
+//      a fixed primary key — so the check is what closes first boot and the
+//      primary key is what makes losing the check-then-write race harmless.
 //   3. The plaintext is never stored and never signs a session. What is
 //      stored is a PBKDF2-SHA256 derivation; the session signing secret is
 //      derived from the stored record, so changing the password invalidates
@@ -143,6 +145,14 @@ export async function verifyPassword(
  * change does — produces a different secret and invalidates outstanding
  * sessions. Never the plaintext: the plaintext is not available here, which
  * is the point.
+ *
+ * One honest difference from the env model, worth stating rather than leaving
+ * implicit (SHA-4458 review, question 4): because this secret is derived
+ * wholly from the stored row, READ access to this database is enough to forge
+ * an operator session, where the env model required the environment. The
+ * widening is small in practice — read access to this database already yields
+ * every signed agreement and every accept token, which is the thing actually
+ * worth stealing — but it is a difference, not an equivalence.
  */
 export function sessionSecretFor(stored: StoredCredential): string {
   return `${stored.algorithm}.${stored.iterations}.${stored.salt}.${stored.hash}`;
@@ -236,11 +246,27 @@ export type ClaimOutcome =
 /**
  * Claim this instance by storing the first operator password.
  *
- * Succeeds at most once per database. The caller must still have validated
+ * Succeeds at most once per instance. The caller must still have validated
  * the password (checkProposedPassword) — this function enforces the
  * once-only property, not the policy.
+ *
+ * It resolves the gate itself rather than trusting the caller to have done
+ * it. The independent review of this lane (SHA-4458) found that the whole
+ * refusal rested on one line in src/app/setup/actions.ts, and that deleting
+ * that line left all 360 tests, `tsc` and `eslint` green. The primary key is
+ * a backstop only for the *claimed* case: on an env-configured instance the
+ * table is empty, so there is no collision to lose, and an unguarded call
+ * would write a stranger's credential into a row that goes live the moment
+ * OPERATOR_PASSWORD is removed — which the docs name as the recovery route.
+ * The gate is resolved BEFORE hashing, so a refused claim also costs no
+ * PBKDF2 work.
  */
 export async function claimOperatorPassword(password: string): Promise<ClaimOutcome> {
+  // Dynamic, like the client below: ./gate imports this module, and a static
+  // import here would be a cycle.
+  const { requireUnclaimed } = await import("./gate");
+  if (!(await requireUnclaimed())) return { claimed: false, reason: "already-set" };
+
   const credential = await hashPassword(password);
   try {
     const prisma = await client();
