@@ -16,6 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 import { classifyPath, SURFACES, UNMATCHED } from "../../src/lib/auth/surfaces";
 import { findActionSites, findUngradedExports } from "./_actionSplit";
@@ -101,170 +102,105 @@ function actionFiles(): RouteFile[] {
  * too: before this, a file that merely *mentioned* `requireOperator()` in a
  * comment satisfied the operator rules.
  *
- * Quotes and template literals are tracked only so that a `//` or `/*` inside
- * a string is not mistaken for a comment opener — their contents are kept,
- * since a call is a call. Newlines inside block comments are preserved so
- * line numbers in any future message still line up.
+ * This asks the TypeScript parser where the comments are instead of scanning
+ * for them by hand. The scanner that used to live here took four rounds to not
+ * quite work, each one adding a shape to an exclusion list:
  *
- * Regex literals are tracked for the same reason, and the independent review
- * of this file (SHA-4469) found why it matters: without them, an unpaired
- * quote inside a character class — `/["]/`, and `/[&<>"']/` at
- * src/lib/legal/html.ts:15, a line already in this repo — flipped the stripper
- * into string mode, after which every comment to the end of the file was
- * copied through verbatim and a comment could satisfy a mechanism rule again.
- * A `/` is a regex opener or a division sign depending on what precedes it, so
- * `regexCanStart` decides from the last significant character already emitted.
- */
-type Mode = "code" | "line" | "block" | "'" | '"' | "`" | "regex";
-
-/**
- * Can a `/` here open a regex literal, rather than divide?
+ *   1. `/["]/` — an unpaired quote in a character class — flipped it into
+ *      string mode, and every comment after it in the file leaked through as
+ *      code (SHA-4469). That line is real: src/lib/legal/html.ts:15.
+ *   2. Teaching it regex literals made `</div>` and `<Foo />` open regex mode,
+ *      where `//` is not a comment opener, so a trailing comment on a JSX line
+ *      leaked instead.
+ *   3. Excluding those two JSX shapes made a regex that *starts* with `>` —
+ *      `/>/g`, the idiomatic sibling of that html.ts line — refuse its own
+ *      opener and leak (SHA-4472).
+ *   4. The prototype for 3 still leaked on `if (a < b) v.replace(/>/g, "x");`,
+ *      because a `<` anywhere earlier on the line looks like an open tag.
  *
- * Decided from the last non-whitespace character of the code emitted so far.
- * A regex may not follow a value — an identifier, number, `)`, `]` or a closing
- * quote — but may follow an operator, `(`, `,`, `=`, `:`, `[`, `{`, `}`, `;`,
- * or one of the keywords that take an expression after them. `}` is read as a
- * block end (regex may follow), which is the usual choice.
+ * The cause was the same every round: whether a `/` opens a regex or divides
+ * depends on a parse the scanner was not doing. The parser does that parse, so
+ * the class is gone rather than enumerated, and `typescript` is already a
+ * devDependency so this costs no new install. The invariant that replaces the
+ * old terminal-mode sweep is below: stripping must not change a single token
+ * the parser can see.
+ *
+ * Comments are blanked to spaces rather than removed, so offsets and line
+ * numbers still line up for any future failure message, and two identifiers
+ * separated by a block comment cannot merge into one token.
+ *
+ * Strings, template literals and regex literals keep their contents, since a
+ * call is a call. So do JSX children, where a `//` is ordinary text.
  */
-const REGEX_PRECEDING_KEYWORDS: ReadonlySet<string> = new Set([
-  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
-  "case", "do", "else", "yield", "await", "throw",
-]);
+function parseSource(source: string): ts.SourceFile {
+  // Parsed as .tsx throughout: it is what most of this repo is, the parser is
+  // error-tolerant so the action-body fragments the rules below pass in parse
+  // too, and every .ts file under src/ yields an identical comment set under
+  // either script kind (measured across all 136 of them).
+  return ts.createSourceFile("source.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+}
 
-function regexCanStart(trimmed: string): boolean {
-  if (trimmed === "") return true; // start of file
-  const last = trimmed[trimmed.length - 1];
-  // A value cannot be followed by a regex, so `/` after one is division.
-  if (!/[\w$)\]'"`]/u.test(last)) return true;
-  if (!/[\w$]/u.test(last)) return false; // `)`, `]`, or a closing quote
-  const word = /[\w$]+$/u.exec(trimmed)?.[0] ?? "";
-  return REGEX_PRECEDING_KEYWORDS.has(word);
+function isJsDoc(node: ts.Node): boolean {
+  return node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode;
 }
 
 /**
- * Does the `/` at `i` open a regex literal?
+ * Every comment range in `source`, and nothing else.
  *
- * The two JSX shapes are excluded before the general rule runs. `</div>` and
- * `<Foo />` both put a `/` where an operator could sit, so the rule above says
- * "regex" for each — and this is a .tsx repo, so that is the common case, not
- * the exotic one. The consequence is not a lost call (regex mode copies its
- * contents through) but a *leak*: the stripper stays in regex mode to the end
- * of the line, and inside regex mode `//` is not a comment opener, so a
- * trailing `// requireUnclaimed()` on the same line as JSX is copied through as
- * code. That is the very hole this mode was added to close, re-entered from a
- * different direction, and the terminal-mode sweep cannot see it because the
- * newline restores `code`. Measured before excluding them: a trailing line or
- * block comment after `<p>hi</p>` leaked while the file still ended in `code`.
- *
- * Excluding both costs nothing here: no regex literal in this repo starts with
- * `>` or follows a `<` (checked across src/), whereas JSX closers are
- * everywhere.
+ * A comment is leading trivia of the token after it, or trailing trivia of the
+ * token before it when it sits on that token's line, so both are collected at
+ * every token. Inside JSX children a `//` is text rather than a comment, so
+ * ranges landing in a JsxText span are dropped.
  */
-function opensRegex(trimmed: string, source: string, i: number): boolean {
-  if (trimmed.endsWith("<")) return false; // `</div>` — JSX closing tag
-  if (source[i + 1] === ">") return false; // `<Foo />` — JSX self-closing tag
-  return regexCanStart(trimmed);
-}
-
-/** The stripper's state machine, shared by stripComments and terminalMode. */
-function scan(source: string): { readonly code: string; readonly mode: Mode } {
-  let mode: Mode = "code";
-  let out = "";
-  let i = 0;
-  // Inside `[...]` of a regex a `/` is a literal slash, not the terminator.
-  let inCharClass = false;
-  while (i < source.length) {
-    const char = source[i];
-    const pair = source.slice(i, i + 2);
-    if (mode === "code") {
-      if (pair === "//") {
-        mode = "line";
-        i += 2;
-        continue;
-      }
-      if (pair === "/*") {
-        mode = "block";
-        i += 2;
-        continue;
-      }
-      if (char === "/" && opensRegex(out.replace(/\s+$/u, ""), source, i)) {
-        mode = "regex";
-        inCharClass = false;
-        out += char;
-        i += 1;
-        continue;
-      }
-      if (char === "'" || char === '"' || char === "`") mode = char;
-      out += char;
-      i += 1;
-      continue;
+function commentRanges(source: string): readonly ts.CommentRange[] {
+  const sf = parseSource(source);
+  const found = new Map<number, ts.CommentRange>();
+  const jsxText: Array<readonly [number, number]> = [];
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) jsxText.push([node.getStart(sf), node.getEnd()]);
+    for (const range of ts.getLeadingCommentRanges(source, node.getFullStart()) ?? []) {
+      found.set(range.pos, range);
     }
-    if (mode === "line") {
-      if (char === "\n") {
-        mode = "code";
-        out += char;
-      }
-      i += 1;
-      continue;
+    for (const range of ts.getTrailingCommentRanges(source, node.getEnd()) ?? []) {
+      found.set(range.pos, range);
     }
-    if (mode === "block") {
-      if (pair === "*/") {
-        mode = "code";
-        i += 2;
-        continue;
-      }
-      if (char === "\n") out += char;
-      i += 1;
-      continue;
-    }
-    if (mode === "regex") {
-      // Copy through, honouring escapes. A regex literal cannot span a line,
-      // so a newline means it was never a regex: fall back to code rather than
-      // swallowing the rest of the file.
-      out += char;
-      if (char === "\\" && i + 1 < source.length) {
-        out += source[i + 1];
-        i += 2;
-        continue;
-      }
-      if (char === "\n") {
-        mode = "code";
-        inCharClass = false;
-      } else if (char === "[") inCharClass = true;
-      else if (char === "]") inCharClass = false;
-      else if (char === "/" && !inCharClass) mode = "code";
-      i += 1;
-      continue;
-    }
-    // Inside a string or template: copy through, honouring escapes, and close
-    // on the matching quote.
-    out += char;
-    if (char === "\\" && i + 1 < source.length) {
-      out += source[i + 1];
-      i += 2;
-      continue;
-    }
-    if (char === mode) mode = "code";
-    i += 1;
-  }
-  return { code: out, mode };
+    for (const child of node.getChildren(sf)) visit(child);
+  };
+  visit(sf);
+  return [...found.values()].filter(
+    (range) => !jsxText.some(([start, end]) => range.pos >= start && range.pos < end),
+  );
 }
 
 function stripComments(source: string): string {
-  return scan(source).code;
+  let out = source;
+  for (const range of commentRanges(source)) {
+    const blanked = source.slice(range.pos, range.end).replace(/[^\n]/gu, " ");
+    out = out.slice(0, range.pos) + blanked + out.slice(range.end);
+  }
+  return out;
 }
 
 /**
- * The state the stripper is left in at the end of `source`.
+ * Every token the parser can see — which is all the rules below are entitled
+ * to read.
  *
- * Any value but `"code"` means the stripper lost track of where code ends and
- * data begins, and every rule in this file that runs on stripped source is
- * unreliable for that file. Asserted over the real tree below, which is what
- * makes the regex-literal fix above hold as a class rather than as the two
- * inputs that happened to be noticed.
+ * JSDoc nodes are skipped whole: the parser materialises them as children of
+ * the declaration they document, and they are exactly what stripping removes.
  */
-function terminalMode(source: string): Mode {
-  return scan(source).mode;
+function significantTokens(source: string): readonly string[] {
+  const sf = parseSource(source);
+  const out: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (isJsDoc(node)) return;
+    const children = node.getChildren(sf);
+    if (children.length === 0 && node.getEnd() > node.getStart(sf)) {
+      out.push(`${node.kind}:${node.getText(sf)}`);
+    }
+    for (const child of children) visit(child);
+  };
+  visit(sf);
+  return out;
 }
 
 test("stripComments removes prose about a call but keeps the call", () => {
@@ -330,55 +266,64 @@ test("stripComments knows a regex literal from a comment and from division", () 
     .includes("requireOperator"), true);
 });
 
-test("stripComments does not mistake a JSX tag for a regex opener", () => {
-  // This repo is .tsx, so `</div>` and `<Foo />` are the common case for a `/`
-  // in an operator position. Reading one as a regex opener keeps the stripper
-  // in regex mode to the end of the line, and `//` is not a comment opener
-  // there — so a trailing comment leaks through as code and can satisfy a
-  // mechanism rule, which is the hole the regex mode exists to close. The
-  // terminal-mode sweep cannot catch this one: the newline restores `code`.
-  assert.equal(
-    stripComments("<p>hi</p> // requireUnclaimed()\nconst a = 1;\n")
-      .includes("requireUnclaimed"),
-    false,
-  );
-  assert.equal(
-    stripComments("<Foo a={x} /> // requireUnclaimed()\nconst a = 1;\n")
-      .includes("requireUnclaimed"),
-    false,
-  );
-  assert.equal(
-    stripComments("<p>hi</p> /* requireUnclaimed() */\nconst a = 1;\n")
-      .includes("requireUnclaimed"),
-    false,
-  );
-  // A closing tag right after an expression or a call is the same shape.
-  assert.equal(
-    stripComments("<p>{f()}</p> // requireUnclaimed()\n").includes("requireUnclaimed"),
-    false,
-  );
-  // And the JSX exclusions must not re-break the real regex cases above.
-  assert.equal(
-    stripComments('const re = /["]/g;\n// requireUnclaimed()\n').includes("requireUnclaimed"),
-    false,
-  );
+test("a trailing comment is stripped whatever the line puts in front of it", () => {
+  // Every entry here leaked through as code at some point in this guardrail's
+  // history, and a leak is what lets prose satisfy a mechanism rule. They are
+  // kept as a table because the lesson of SHA-4469 and SHA-4472 is that the
+  // next shape is not the last one — adding it should be one line.
+  const leaks: ReadonlyArray<readonly [string, string]> = [
+    ["JSX closing tag", "<p>hi</p> // requireUnclaimed()\nconst a = 1;\n"],
+    ["JSX self-closing tag", "<Foo a={x} /> // requireUnclaimed()\nconst a = 1;\n"],
+    ["JSX closer, block comment", "<p>hi</p> /* requireUnclaimed() */\nconst a = 1;\n"],
+    ["JSX closer after a call", "<p>{f()}</p> // requireUnclaimed()\n"],
+    ["JSX expression container", "<p>{/* requireUnclaimed() */}</p>\n"],
+    // SHA-4472: a regex whose first character is `>` has the `<Foo />` shape.
+    ["regex starting with >", 'v.replace(/>/g, "&gt;"); // requireUnclaimed()\n'],
+    ["regex starting with >=", 'if (/>=/.test(s)) f(s); // requireUnclaimed()\n'],
+    // ...and a `<` earlier on the line does not make the one after it a tag.
+    ["< compare, then that regex", 'if (a < b) v.replace(/>/g, "x"); // requireUnclaimed()\n'],
+    ["generic call, then that regex", 'f<string>(x); v.replace(/>/g, "y"); // requireUnclaimed()\n'],
+    // A property named with a keyword is not a keyword, so this is division.
+    ["keyword-named property", "const r = row.in / 2; // requireUnclaimed()\n"],
+    ["another one", "const r = counts.delete / 2; // requireUnclaimed()\n"],
+    ["quote in a character class", 'const re = /["]/g;\n// requireUnclaimed()\n'],
+  ];
+  for (const [label, source] of leaks) {
+    assert.equal(stripComments(source).includes("requireUnclaimed"), false, label);
+  }
+  // The paired controls: none of the above may cost a real call. A stripper
+  // that eats code fails these, and a rule that stops seeing its call is just
+  // as broken as one a comment can satisfy.
+  const keeps: ReadonlyArray<readonly [string, string]> = [
+    ["after a JSX self-closing tag", "<Foo a={x} /> // prose\nawait requireOperator();\n"],
+    ["after a JSX closing tag", "<p>hi</p> // prose\nawait requireOperator();\n"],
+    ["inside a JSX prop", "<Foo onX={() => requireOperator()} />\n"],
+    ["after a >-leading regex", 'v.replace(/>/g, "x"); await requireOperator();\n'],
+    ["after a keyword-named property", "const n = row.in / 2; await requireOperator();\n"],
+  ];
+  for (const [label, source] of keeps) {
+    assert.equal(stripComments(source).includes("requireOperator"), true, label);
+  }
 });
 
-test("every source file the guardrail reads ends in code mode", () => {
-  // The class-level assertion behind the regex-literal fix (SHA-4469).
+test("stripping a real source file changes no token the parser can see", () => {
+  // The class-level assertion, and the one the old hand-rolled scanner could
+  // not carry (SHA-4469, SHA-4472).
   //
-  // Every rule in this file matches against stripped source. If the stripper
-  // ends a file in any mode but `code`, it lost quote or regex parity
-  // somewhere in the middle, and from that point on it was copying prose
-  // through as code and code through as prose — so the rules that look at
-  // that file prove nothing, silently and while green.
+  // Every rule in this file matches against stripped source, so two things can
+  // go wrong: a comment survives and satisfies a rule as though it were code,
+  // or real code is eaten and a rule silently stops seeing the call it checks.
+  // Both change the token stream. Comparing each file's tokens against the
+  // tokens of its stripped self therefore catches either one, for any shape,
+  // rather than for the inputs somebody thought to try — which is how all four
+  // leaks in this guardrail's history got in.
   //
-  // This is asserted over the whole of src/, not just the src/app files the
-  // rules walk today: the two files that first broke it
-  // (src/lib/legal/html.ts, src/lib/auth/) sit outside src/app, and a rule
-  // here only has to widen its scope once for that to matter. Checking the
-  // tree is what catches the next shape nobody thought of.
+  // Checked over the whole of src/, not just the src/app files the rules walk
+  // today: the files that broke the old scanner (src/lib/legal/html.ts,
+  // src/lib/auth/) sit outside src/app, and a rule here only has to widen its
+  // scope once for that to matter.
   const offenders: string[] = [];
+  let checked = 0;
   const visit = (dir: string): void => {
     for (const entry of listDir(dir)) {
       const full = path.join(dir, entry);
@@ -387,21 +332,24 @@ test("every source file the guardrail reads ends in code mode", () => {
         continue;
       }
       if (!entry.endsWith(".ts") && !entry.endsWith(".tsx")) continue;
-      const mode = terminalMode(readSource(full));
-      if (mode !== "code") {
-        offenders.push(`${path.relative(process.cwd(), full)} ends in ${mode} mode`);
-      }
+      const source = readSource(full);
+      checked += 1;
+      const before = significantTokens(source).join("\n");
+      const after = significantTokens(stripComments(source)).join("\n");
+      if (before !== after) offenders.push(path.relative(process.cwd(), full));
     }
   };
-  const srcDir = path.join(process.cwd(), "src");
-  visit(srcDir);
+  visit(path.join(process.cwd(), "src"));
   assert.deepEqual(
     offenders,
     [],
-    "tests/auth/coverage.test.ts stripComments() lost track of code vs data in " +
-      "each of these files, so every rule in this file that reads them is " +
-      "unreliable — teach the stripper the construct it tripped on",
+    "tests/auth/coverage.test.ts stripComments() changed the code of each of " +
+      "these files, so every rule here that reads them is unreliable — it " +
+      "either leaked a comment as code or ate code as a comment",
   );
+  // Non-vacuity: an empty walk would pass the assertion above while proving
+  // nothing, which is the trap `the app has routes to check` exists to close.
+  assert.ok(checked > 100, `expected the real tree, checked ${checked} files`);
 });
 
 const GUARD_CALL = /\b(requireOperator|guardOperatorRequest)\s*\(/;
