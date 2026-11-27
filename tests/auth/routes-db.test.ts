@@ -180,13 +180,19 @@ test("an expired session is refused even though it was once valid", async () => 
 });
 
 test("with OPERATOR_PASSWORD unset the route fails closed, not open", async () => {
+  // This process has a real migrated database with no credential row, so the
+  // gate resolves to first boot (SHA-4455) — the instance is unclaimed. An
+  // unclaimed instance must still serve NO evidence: "nobody has set a
+  // password yet" is not "everybody may read the acceptance record".
   delete process.env.OPERATOR_PASSWORD;
   try {
     const res = await fetchEvidence(sendId);
+    // 503 rather than a 303 to /setup: this surface is a download, and an
+    // HTML form is not an answer a non-browser caller can use.
     assert.equal(res.status, 503);
     const body = await res.text();
-    assert.ok(body.includes("OPERATOR_PASSWORD"));
-    assert.ok(!body.includes(token));
+    assert.ok(!body.includes(token), "the accept token is not in the refusal");
+    assert.match(body, /no operator password/i);
     // And the session that was valid a moment ago no longer opens it.
     const withCookie = await fetchEvidence(sendId, cookie);
     assert.equal(withCookie.status, 503);

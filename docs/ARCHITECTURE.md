@@ -126,11 +126,16 @@ SHA-2956; other lanes add routes, not nav edits.
 
 - **Public, no auth:** `/legal`, `/legal/[slug]` (+version/history/compare/
   pdf), `/legal/embed.js`, `/legal/embed/frame`, `/msa/[token]` signing
-  pages, and `/login`. Public pages render variables in `public` mode only.
+  pages, `/login`, and `/setup` (first boot, SHA-4455 — see below). Public
+  pages render variables in `public` mode only.
+- **Liveness:** `GET /api/health` returns a fixed `{"ok":true}` to anyone.
+  It is the only path that answers `200` in every state of the app, which is
+  what a platform healthcheck needs; it deliberately reports no version, no
+  migration state and no data (SHA-4455).
 - **Operator UI:** everything else — single-operator model at v0 (the MSP),
-  gated server-side on a session cookie derived from one
-  `OPERATOR_PASSWORD` (`src/lib/auth/**`, SHA-3047). Every operator page,
-  route handler and server action calls the guard as its first statement.
+  gated server-side on a session cookie derived from the operator password
+  (`src/lib/auth/**`, SHA-3047). Every operator page, route handler and
+  server action calls the guard as its first statement.
   Nothing in the gate is a client-side redirect: a redirect that has already
   shipped the HTML has already shipped the send token.
 
@@ -146,6 +151,28 @@ SHA-2956; other lanes add routes, not nav edits.
   machine-readable copy of the list, and `tests/auth/coverage.test.ts` fails
   the build when a route under `src/app` is unclassified or an operator
   route forgets the guard. Adding a route means classifying it there.
+
+  **Where the password comes from (SHA-4455).** `OPERATOR_PASSWORD` is still
+  the first source and still wins wherever it is set. It is no longer the
+  only one: a one-click deploy has no shell in which to set a variable, and
+  the alternative — shipping a default password in a public template — is a
+  published credential for every instance ever deployed from it. So an
+  instance with no `OPERATOR_PASSWORD` is *unclaimed*: operator screens
+  redirect to `/setup`, the first visitor sets a password, and it is stored
+  as a PBKDF2-SHA256 derivation in `OperatorCredential`
+  (`src/lib/auth/credential.ts`). Three properties keep this from widening
+  the gate: the claim is a single INSERT on a fixed primary key, so it can
+  happen exactly once and cannot be raced; the plaintext is never stored and
+  never signs a session; and an instance that is *misconfigured* rather than
+  unclaimed — `OPERATOR_PASSWORD` set but too short, or a database that
+  cannot be read — fails closed instead of reopening `/setup`.
+  `src/lib/auth/gate.ts` is that decision table, and `tests/auth/gate.test.ts`
+  is one test per row.
+
+  This is the one qualification on "secrets stay in env" below: a secret the
+  operator *chooses in the product* has to be stored by the product, so it is
+  stored the way a password is — hashed, salted, per row. No provider key, no
+  API key and no cron secret moved.
 - **Cron:** `GET /api/cron/*` guarded by `CRON_SECRET` (liveness checks,
   send sweeps, notice sweeps). Self-host scheduling via container cron or
   host crontab; compose ships a sensible default.

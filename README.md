@@ -38,7 +38,26 @@ it runs in production.
 - **API** — PSA and AI tools can create sends and read acceptance status via
   a token-authenticated REST surface.
 
-## Quick start
+## Deploy it in one click
+
+> **The template is not published yet, so there is no button here on purpose.**
+> A `railway.com/template/...` link only exists once the template is published
+> from the owner's Railway account, and that code is not issued yet
+> (`docs/RAILWAY-TEMPLATE.md` § 4). An image linking to a URL that returns 404
+> is worse than no button: it is the first thing a visitor clicks, and on a
+> public repo an unregistered template slug is one somebody else can register.
+> This paragraph becomes the button the day the code exists.
+
+You will get the app, a 1 GB volume for its database, and a public URL. Open that
+URL and the first screen asks you to set an operator password — **no default
+credentials ship with this**, so there is nothing to forget to change. One MSA
+tool per deploy.
+
+There is no database service to configure: this app's Prisma datasource is
+SQLite, so its data is a file on the volume at `/app/data`. Details, and the
+exact platform settings, are in [`docs/RAILWAY-TEMPLATE.md`](docs/RAILWAY-TEMPLATE.md).
+
+## Quick start (self-hosted)
 
 ```sh
 git clone https://github.com/Standard-Computer/Standard-MSA.git
@@ -50,6 +69,11 @@ docker compose up
 Open http://localhost:3000, sign in with that password, and the onboarding
 wizard takes it from there. Data lives in a SQLite file on a Docker volume;
 back up by copying the file.
+
+Prefer not to put the password in a file? Leave `OPERATOR_PASSWORD` unset and
+the first visit to http://localhost:3000 will offer the same first-boot setup
+screen the one-click deploy uses. An environment value always wins over one
+set that way.
 
 The full operator guide — email providers, scheduled jobs, upgrades,
 backups, visitor-data retention and your privacy obligations — is

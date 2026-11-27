@@ -7,15 +7,34 @@ services:
     environment:
       DATABASE_URL: file:/app/data/standard-msa.db
       APP_BASE_URL: http://localhost:3000
-      # Operator sign-in (SHA-3047). Required, and deliberately unset here:
-      # compose refuses to start rather than bring up an instance whose
-      # operator screens are closed to their own owner. Export it, or put
-      # OPERATOR_PASSWORD=... in a .env file next to this one.
-      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?set OPERATOR_PASSWORD to a long random value (12+ chars) before starting}
+      # Operator sign-in (SHA-3047). Export it, or put OPERATOR_PASSWORD=...
+      # in a .env file next to this one, and use 12+ random characters.
+      #
+      # Optional since SHA-4455, where it was a hard `:?` failure: an instance
+      # with no OPERATOR_PASSWORD is now UNCLAIMED rather than closed, and the
+      # first visit to it offers a one-time /setup screen that sets the
+      # password and stores it hashed. Refusing to start would make that path
+      # unreachable from the documented install, and it is the same path the
+      # one-click deploy uses — so compose must be able to express it.
+      # A value set here still wins over one set at /setup.
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-}
     volumes:
       - msa-data:/app/data
     ports:
       - "3000:3000"
+    # The same path a platform healthcheck uses (docs/RAILWAY-TEMPLATE.md):
+    # the one route that answers 200 in every state, since `/` redirects on
+    # an instance nobody has claimed yet.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
 
 volumes:
   msa-data:

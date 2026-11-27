@@ -1,0 +1,10 @@
+-- CreateTable
+CREATE TABLE "OperatorCredential" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "algorithm" TEXT NOT NULL,
+    "iterations" INTEGER NOT NULL,
+    "salt" TEXT NOT NULL,
+    "hash" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+);

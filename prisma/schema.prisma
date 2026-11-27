@@ -355,3 +355,29 @@ model WebhookDelivery {
   @@index([status, nextAttemptAt])
   @@index([webhookId, createdAt])
 }
+
+// ── Operator credential (first boot, SHA-4455) ──────────────────────────────
+
+// The operator password, when it was set through the first-boot screen
+// instead of OPERATOR_PASSWORD. At most ONE row, keyed on a constant id —
+// that primary key is what makes "first boot happens once" a database
+// guarantee rather than a check-then-write race (src/lib/auth/credential.ts).
+//
+// No plaintext: `hash` is a PBKDF2-SHA256 derivation under a per-row `salt`,
+// and the session signing secret is derived from this record, so replacing it
+// invalidates every outstanding session. `algorithm` and `iterations` are
+// stored per row so a future cost bump can still read a row written today.
+//
+// An instance with OPERATOR_PASSWORD set never reads this table.
+model OperatorCredential {
+  // No @default: the id is supplied explicitly (CREDENTIAL_ROW_ID), so a
+  // second claim is a primary-key violation rather than a second row with an
+  // autoincremented id.
+  id         Int      @id
+  algorithm  String // "pbkdf2-sha256"
+  iterations Int
+  salt       String // base64url, 16 bytes
+  hash       String // base64url, 32 bytes
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

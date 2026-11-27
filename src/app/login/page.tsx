@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
-import { operatorAuth, MIN_PASSWORD_LENGTH } from "@/lib/auth/config";
+import { MIN_PASSWORD_LENGTH } from "@/lib/auth/config";
+import { operatorGate, SETUP_PATH } from "@/lib/auth/gate";
 import { hasOperatorSessionCookie } from "@/lib/auth/page";
 import { safeRedirectTarget } from "@/lib/auth/surfaces";
 import { loginAction, logoutAction, type LoginError } from "./actions";
@@ -22,6 +24,9 @@ const ERRORS: Record<LoginError, string> = {
   missing: "That password is not correct.",
   throttled: "Too many attempts. Wait a few minutes and try again.",
   unconfigured: "This instance has no operator password set.",
+  "already-claimed":
+    "This instance already has an operator password — someone completed first-boot " +
+    "setup before you did. Sign in with it, or redeploy if that was not you.",
 };
 
 function isLoginError(value: unknown): value is LoginError {
@@ -35,20 +40,22 @@ export default async function LoginPage({
 }) {
   const { next, error } = await searchParams;
   const target = safeRedirectTarget(next, "/");
-  const state = operatorAuth();
+  const gate = await operatorGate();
+  // An unclaimed instance has no password to type yet (SHA-4455).
+  if (gate.kind === "setup") redirect(SETUP_PATH);
   const signedIn = await hasOperatorSessionCookie();
 
   return (
     <main className="mx-auto max-w-md px-6 py-24">
       <h1 className="text-2xl font-semibold">Standard-MSA</h1>
 
-      {!state.configured ? (
+      {gate.kind === "closed" ? (
         <>
           <p className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            {state.reason}
+            {gate.reason}
           </p>
           <p className="mt-3 text-xs text-slate-500">
-            Until it is set, every operator screen stays closed. A long random value of at
+            Until it is fixed, every operator screen stays closed. A long random value of at
             least {MIN_PASSWORD_LENGTH} characters is what this expects; the recipients&apos;
             own agreement links are unaffected.
           </p>

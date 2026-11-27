@@ -16,17 +16,19 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { operatorAuth } from "./config";
+import { gateSessionSecret, operatorGate, SETUP_PATH } from "./gate";
 import { loginUrlFor } from "./guard";
 import { OPERATOR_COOKIE, verifySession } from "./session";
 import { safeRedirectTarget } from "./surfaces";
 
 /** Is the current request carrying a valid operator session? */
 export async function hasOperatorSessionCookie(): Promise<boolean> {
-  const state = operatorAuth();
-  if (!state.configured) return false;
+  const secret = gateSessionSecret(await operatorGate());
+  // A null check, not a secret comparison — see the same note in ./guard.ts.
+  // eslint-disable-next-line security/detect-possible-timing-attacks
+  if (secret === null) return false;
   const jar = await cookies();
-  return verifySession(jar.get(OPERATOR_COOKIE)?.value, state.password);
+  return verifySession(jar.get(OPERATOR_COOKIE)?.value, secret);
 }
 
 /**
@@ -39,5 +41,8 @@ export async function hasOperatorSessionCookie(): Promise<boolean> {
  */
 export async function requireOperator(returnTo = "/"): Promise<void> {
   if (await hasOperatorSessionCookie()) return;
+  // An unclaimed instance goes to first boot rather than to a sign-in form
+  // for a password that does not exist yet (SHA-4455).
+  if ((await operatorGate()).kind === "setup") redirect(SETUP_PATH);
   redirect(loginUrlFor(safeRedirectTarget(returnTo, "/")));
 }

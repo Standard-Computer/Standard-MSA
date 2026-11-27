@@ -29,12 +29,61 @@ docker compose up -d --build
 
 That is the whole install. On boot the container runs
 `prisma migrate deploy` (so the database file is created and migrated
-before the server starts) and then serves the app on port 3000. The
-`msa-data` volume holds the SQLite file across restarts and upgrades.
+before the server starts) and then serves the app on the port `PORT` names,
+falling back to **3000** when it is unset — which is the case here, and is
+what `docker-compose.yml` publishes. The `msa-data` volume holds the SQLite
+file across restarts and upgrades.
 
-First visit: open `http://your-host:3000` — you land in the onboarding
-wizard (MSP identity, venue, contract header). It is skippable and
-re-runnable from Settings → Identity.
+On a platform that injects `PORT` the app listens on that value instead; the
+3000 in this section is the compose default, not a fixed port. Railway injects
+`8080`, and there the public domain's target port must be `8080` too — see
+[`docs/RAILWAY-TEMPLATE.md`](RAILWAY-TEMPLATE.md) §2.1.
+
+First visit: open `http://your-host:3000`. If you set `OPERATOR_PASSWORD` in
+`.env`, sign in with it; if you left it blank, you get a one-time setup
+screen that asks you to choose one (see below). Either way you land in the
+onboarding wizard (MSP identity, venue, contract header). It is skippable
+and re-runnable from Settings → Identity.
+
+### Signing in: the operator password
+
+One password opens every operator screen. There are two ways to set it and
+**no default** — nothing ships with a password already in it.
+
+1. **`OPERATOR_PASSWORD` in the environment.** The original way and still the
+   recommended one for an install you own the shell of: the secret never
+   touches the database, and rotating it is an edit plus a restart.
+2. **The first-boot `/setup` screen.** Leave `OPERATOR_PASSWORD` unset and the
+   first visit to any operator screen redirects to `/setup`, which takes a
+   password of at least 12 characters, stores it hashed (PBKDF2-SHA256,
+   600 000 iterations, per-row salt), signs you in, and then closes
+   itself for good. This is what the one-click Railway deploy uses, where
+   there is no shell in which to set a variable.
+
+Things worth knowing about option 2:
+
+- **Whoever opens the instance first sets the password.** On a URL that is
+  already reachable from the internet, open it the moment the deploy is
+  green. Until it is claimed nobody can sign in — but nor is the claim
+  reserved for you.
+- It can only happen **once per instance**. A second submission, a second
+  person or a second replica is refused twice over: the claim re-checks that
+  this instance is unclaimed before it writes anything, and the write itself
+  is a single row on a fixed primary key, so even a claim that loses the
+  check-then-write race loses it harmlessly rather than overwriting.
+- `OPERATOR_PASSWORD` **always wins** if it is set, which is also the
+  recovery route if the stored password is lost: set the variable, restart,
+  sign in.
+- A value that is present but **shorter than 12 characters** closes the
+  operator screens and does *not* reopen `/setup`. That instance has an owner
+  who misconfigured it; reopening first boot would hand it to a stranger.
+  Fix the variable.
+- The same applies to a database the app cannot read: it fails closed rather
+  than looking unclaimed.
+
+Changing the password — by either route — invalidates every open session.
+The `/legal` site and recipients' own `/msa/<token>` links are unaffected by
+any of this; they are public by design.
 
 ### Put your MSA (and HIPAA BAA) into it
 
@@ -69,7 +118,8 @@ the repo. The ones that matter:
 
 | Variable | What it does |
 | --- | --- |
-| `APP_BASE_URL` | The public URL of this install. Baked into MSA links, the embed, and tracking URLs — set it before sending anything. |
+| `APP_BASE_URL` | The public URL of this install. Baked into MSA links, the embed, and tracking URLs — set it before sending anything. On an `https://` value the operator session cookie is marked `Secure`, so set it on any install reachable over TLS. |
+| `OPERATOR_PASSWORD` | Operator sign-in, 12+ characters. Optional: leave it unset and set the password on the first-boot `/setup` screen instead (above). |
 | `DATABASE_URL` | Leave as the compose default (`file:/app/data/standard-msa.db`). Required — the container refuses to start without it. |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` + provider keys | Mail delivery; see below. |
 | `CRON_SECRET` | Long random string guarding the scheduled-job endpoints. |
@@ -78,7 +128,20 @@ the repo. The ones that matter:
 | `API_RATE_LIMIT_PER_MINUTE` | Per-API-key request budget (default 120). |
 
 Secrets live in the environment only — never in the database, never in the
-repo, never shown by the UI.
+repo, never shown by the UI. The one exception is a password you choose in
+the product itself at `/setup`, which the product therefore has to store; it
+is stored the way a password is, hashed and salted, and never as plaintext.
+
+### Running it on a platform (Railway, Fly, Render, a VPS)
+
+The same image runs anywhere. Railway is the intended one-click path, and the
+template is not published yet —
+see [`RAILWAY-TEMPLATE.md`](RAILWAY-TEMPLATE.md), which also documents the
+settings any other platform needs: a persistent volume at `/app/data`, a
+`DATABASE_URL` pointing into it, `APP_BASE_URL` set to the public domain,
+**one replica** (a SQLite file cannot be shared by two containers), and
+`/api/health` as the healthcheck path — the only route that answers `200`
+in every state, since `/` redirects on an unclaimed instance.
 
 ### Running it somewhere other than compose
 
