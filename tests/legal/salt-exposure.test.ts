@@ -187,3 +187,63 @@ test("the env documentation names the variable without a real value", () => {
     `.env.example must ship an empty or obviously-placeholder salt, got ${JSON.stringify(value)}`,
   );
 });
+
+test("the default salt is a published constant, and visits.ts says so", () => {
+  // Two halves, and the first is what earns the second.
+  //
+  // Half one is mechanical: with the var unset, visitIpSalt() returns a
+  // string that is sitting in this repo's own committed source. A salt you
+  // can read off GitHub is not a secret, so hashing under it is reversible
+  // by sweeping 2^32 addresses — the hash is the address with extra steps,
+  // as this file's header says.
+  //
+  // Half two pins the docstring to half one. Prose is load-bearing here:
+  // the operator decides whether "hash visitor IPs" is enough for them by
+  // reading what the code claims about it, so a comment promising a
+  // "pseudonym" under the shipped default is a defect on its own — it was
+  // one (SHA-4514 finding 3), and it contradicted this very file. The pin
+  // bites both ways: re-asserting pseudonymity fails, and deleting the
+  // warning fails too.
+  const saved = process.env.VISIT_IP_HASH_SALT;
+  delete process.env.VISIT_IP_HASH_SALT;
+  let fallback: string;
+  try {
+    fallback = visits.visitIpSalt();
+  } finally {
+    process.env.VISIT_IP_HASH_SALT = saved;
+  }
+
+  const rel = "src/lib/visits/visits.ts";
+  const src = readFileSync(join(process.cwd(), rel), "utf8");
+  assert.ok(fallback.length > 0, "the toggle must never fall back to an empty salt");
+  assert.ok(
+    src.includes(`"${fallback}"`),
+    `the fallback salt ${JSON.stringify(fallback)} is a literal in ${rel} — i.e. public. ` +
+      "If it became per-install and unpublished, update this test and the docstring together.",
+  );
+
+  // Scoped to visitIpSalt's own docstring, so prose elsewhere in the file
+  // cannot trip it, and unwrapped — the claim this caught straddled a line
+  // break ("is still a\n * pseudonym"), so the comment markers and the
+  // wrapping come out before matching.
+  const fnAt = src.indexOf("export function visitIpSalt");
+  const docstring = src
+    .slice(src.lastIndexOf("/**", fnAt), fnAt)
+    .replace(/^[ \t]*\*[ \t]?/gm, "")
+    .replace(/\s+/g, " ");
+  assert.doesNotMatch(
+    docstring,
+    /(is|remains|still) (a )?(pseudonym|pseudonymous|anonymous)/i,
+    `${rel} must not claim the default-salt hash is a pseudonym — it is recoverable`,
+  );
+  assert.match(
+    docstring,
+    /NOT a pseudonym/,
+    `${rel} must state plainly that the default-salt hash is not a pseudonym`,
+  );
+  assert.match(
+    docstring,
+    /public constant/,
+    `${rel} must say the default salt is public, which is why the hash is reversible`,
+  );
+});

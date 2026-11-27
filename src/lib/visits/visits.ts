@@ -60,11 +60,20 @@ export function hashIp(ip: string, salt: string): string {
 /**
  * The salt behind `hashVisitorIps`. One read of the env var, in one place.
  *
- * The fallback is deliberate: a hash with a shipped-default salt is still a
- * pseudonym rather than an address, and an install that enables the toggle
+ * The fallback buys exactly one thing: an install that enables the toggle
  * without setting the var must not silently fall back to storing raw IPs.
- * Operators who want the hash to be unguessable set the var; README §
- * Visitor log says so.
+ * That is the whole of it. A hash under the default salt is NOT a pseudonym
+ * — the default is a public constant, committed to a public repo and shipped
+ * in the Railway template (SHA-4455), so anyone can sweep the 2^32 IPv4
+ * space against `sha256("standard-msa:" + ip)` and read the address straight
+ * back out. Measured under SHA-4514: ~8.7 core-hours on one CPython core,
+ * well under a second on a commodity GPU. It is the address with extra
+ * steps, which is what tests/legal/salt-exposure.test.ts says and what the
+ * test below pins this comment to.
+ *
+ * Only an operator-set salt, never published, makes the stored value a
+ * pseudonym. `.env.example` and docs/SELF-HOSTING.md name the var so it can
+ * be set; nothing here should be read as a reason not to.
  *
  * Never logged, never rendered, never put in the embed snippet — the salt is
  * an input to a one-way function here and nowhere else. tests/legal/
