@@ -27,6 +27,10 @@ export default async function LegalIndexPage() {
                 v{current.version}
                 {current.publishedAt ? ` · effective ${current.publishedAt.toISOString().slice(0, 10)}` : ""}
                 {history.length > 0 ? ` · ${history.length} earlier version${history.length === 1 ? "" : "s"}` : ""}
+                {" · "}
+                <a href={`/legal/${doc.slug}/pdf`} className="text-blue-700">
+                  PDF
+                </a>
               </p>
             </li>
           ))}

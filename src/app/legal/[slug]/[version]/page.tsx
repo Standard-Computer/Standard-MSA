@@ -49,7 +49,12 @@ export default async function LegalVersionPage({
       <p className="mt-1 text-sm text-slate-500">
         v{ver.version}
         {ver.publishedAt ? ` · effective ${ver.publishedAt.toISOString().slice(0, 10)}` : ""} · historical
-        version
+        version{" · "}
+        {/* A reader who accepted this version can keep a copy of THIS
+            version, not only of the current one (SHA-4501). */}
+        <a href={`/legal/${doc.slug}/${ver.version}/pdf`} className="text-blue-700">
+          Download PDF
+        </a>
       </p>
       <div dangerouslySetInnerHTML={{ __html: html }} />
     </main>

@@ -155,9 +155,25 @@ export default async function DraftEditorPage({
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-slate-700">
-            Preview — as the public /legal page will render it
-          </h2>
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="text-sm font-semibold text-slate-700">
+              Preview — as the public /legal page will render it
+            </h2>
+            {/* The preview and the download are the same text through the
+                same pipeline, so the generic wording is reviewable here and
+                keepable as a file before anything is published (SHA-4501). */}
+            <a
+              href={`/documents/${slug}/versions/${draft.version}/pdf`}
+              className="shrink-0 text-sm text-blue-700 hover:underline"
+            >
+              Download as PDF (draft)
+            </a>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Both show the no-known-client wording: your MSP details filled in, and client and signer
+            details as the generic prose the website uses (&ldquo;the Client&rdquo;, &ldquo;the date of
+            acceptance&rdquo;). A send fills in the real recipient instead.
+          </p>
           <div className="mt-2 rounded-lg border border-slate-200 p-5">
             <style dangerouslySetInnerHTML={{ __html: embedCss(settings.accentColor) }} />
             <div dangerouslySetInnerHTML={{ __html: previewHtml }} />

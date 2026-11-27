@@ -12,12 +12,19 @@ it runs in production.
 ## What it does
 
 - **Document library** — markdown documents with merge variables, drafts,
-  published versions, effective dates, diffs between versions, PDF export.
-  Document types are data: v1 ships the MSA and the HIPAA BAA; your custom
-  agreement needs no code change.
+  published versions, effective dates, diffs between versions. Document
+  types are data: the starter set ships an MSA, a HIPAA BAA and website
+  terms; your custom agreement needs no code change.
+- **PDF download** — any version downloads as a PDF: from `/documents` (any
+  version, drafts included and labelled as drafts) and from the public
+  `/legal` pages (published versions only). Every one of them renders the
+  same no-known-client wording the website shows — your details filled in,
+  the client and signer described generically — because a download has no
+  recipient. A per-recipient PDF is not built yet; the acceptance evidence
+  record downloads as JSON.
 - **Authoring built in** — the `/documents` screen creates, drafts,
-  previews and publishes your documents, with MSA and HIPAA BAA starter
-  templates so a fresh install is never empty. **The templates are
+  previews and publishes your documents, with MSA, HIPAA BAA and website
+  terms starter templates so a fresh install is never empty. **The templates are
   examples, not legal advice** — have your own counsel review anything
   before you publish or send it.
 - **Onboarding wizard** — enter MSP identity once (name, legal name, address,

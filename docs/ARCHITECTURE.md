@@ -60,6 +60,9 @@ add-only). The shape, by area:
   acceptance-sourced) with three render modes: `blanks` (labelled blanks),
   `public` (MSP values filled, recipient values generic — the only mode the
   public site uses, so client data can never leak there), `filled` (per-send).
+  The PDF download (SHA-4501) is `public` mode on every surface it is offered
+  from, including the operator's own: `src/lib/legal/pdfDocument.ts` takes no
+  mode argument, so no call site can ask it for a filled one.
 - **Recipients/contacts** — `Recipient`: email, full name, company, legal
   name, address, phone. Deliberately flat — no sites, CRM stages or quote
   links. API and ad-hoc sends create these on the fly from as little as an
@@ -124,10 +127,16 @@ SHA-2956; other lanes add routes, not nav edits.
 
 ## Request surfaces
 
-- **Public, no auth:** `/legal`, `/legal/[slug]` (+version/history/compare/
-  pdf), `/legal/embed.js`, `/legal/embed/frame`, `/msa/[token]` signing
-  pages, `/login`, and `/setup` (first boot, SHA-4455 — see below). Public
-  pages render variables in `public` mode only.
+- **Public, no auth:** `/legal`, `/legal/[slug]` (+version/history/compare),
+  `/legal/[slug]/pdf` and `/legal/[slug]/[version]/pdf` (the PDF downloads,
+  SHA-4501 — published versions only, since both resolve through
+  `src/lib/legal/documents.ts`), `/legal/embed.js`, `/legal/embed/frame`,
+  `/msa/[token]` signing pages, `/login`, and `/setup` (first boot, SHA-4455
+  — see below). Public pages render variables in `public` mode only.
+  The operator's own download, `/documents/[slug]/versions/[version]/pdf`, is
+  the one PDF route that is **gated** — it is also the only one that serves a
+  draft — and it refuses as a `status` rather than a redirect, because a
+  download cannot use a login form.
 - **Liveness:** `GET /api/health` returns a fixed `{"ok":true}` to anyone.
   It is the only path that answers `200` in every state of the app, which is
   what a platform healthcheck needs; it deliberately reports no version, no
@@ -206,5 +215,13 @@ visit redirects to onboarding until `MspIdentity` exists. Upgrades:
 volume's SQLite file. No external services required; email is optional until
 a provider is configured (the app degrades to link-sharing mode with every
 send gate storing "emails not configured" as the skip reason).
+
+PDF generation (SHA-4501) stays inside that story: `pdf-lib` is pure
+JavaScript, pinned exact, MIT, with no native build and no install script,
+and only the base-14 fonts are used — so no headless browser, no font file
+and no rendering service joins the container. The cost is that those fonts
+can only draw WinAnsi, which is why `src/lib/legal/pdfText.ts` filters every
+string before it is measured: without it an operator pasting a name outside
+Latin-1 would 500 the download of their own agreement.
 
 Worked by: Viper CTO (SF2 / SHA).

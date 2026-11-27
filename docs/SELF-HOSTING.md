@@ -92,17 +92,34 @@ nothing to send until you author one. From the home page, open
 **Documents**:
 
 1. **Import a starter template** (Master Service Agreement, HIPAA Business
-   Associate Agreement) or create a blank document and paste your own
-   text. Templates arrive as *your* draft — the body is Markdown with
-   `{{variable}}` placeholders that fill from your MSP identity and, on
-   each send, the recipient's details.
+   Associate Agreement, Website Terms of Use) or create a blank document and
+   paste your own text. Templates arrive as *your* draft — the body is
+   Markdown with `{{variable}}` placeholders that fill from your MSP identity
+   and, on each send, the recipient's details.
 2. **Edit the draft** and watch the live preview — it renders through the
    exact pipeline the public `/legal` page and the website embed use.
-   Drafts are invisible publicly.
+   Drafts are invisible publicly. **Download as PDF** next to the preview
+   saves that same text as a file, marked as a draft on every page.
 3. **Publish.** The version becomes public at `/legal/<slug>`, immutable,
    and sendable from Sends → New. Publishing never emails anybody; telling
    prior recipients about an update is a separate, explicit choice on
    Sends → Update notices.
+
+**Which template for which situation.** The MSA and the BAA are bilateral
+agreements: somebody signs them, so they end in an acceptance block and you
+send them to a named client. The Website Terms are for the case where there
+is **no known client** — a public page where continuing to use the site is
+the acceptance. They carry no signature block for that reason, and they say
+in section 5 that they do not govern the services your MSA governs.
+
+**Downloading a PDF.** Every version row on `/documents/<slug>` has a **PDF**
+link, and each published document has one on `/legal` and on its own public
+page. All of them render in the same `public` mode: your identity is filled
+in and the client and signer are described generically ("the Client", "the
+date of acceptance"), because a download has no recipient. That is also how
+to read and keep exactly what your website will show when nobody is named.
+A per-recipient PDF does not exist yet; the acceptance evidence record for a
+send downloads as JSON.
 
 > **The starter templates are examples, not legal advice.** They exist so
 > the product works out of the box; have your own counsel review anything
