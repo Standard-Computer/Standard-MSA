@@ -4,7 +4,8 @@
 // nothing to send. These templates are the starting matter: the operator
 // imports one as their own DRAFT, edits it, and nothing is visible anywhere
 // until they publish. Sean's SHA-2970 ruling put both the MSA and the HIPAA
-// BAA in v1, so both ship here.
+// BAA in v1, so both ship here; SHA-4501 added the website terms, for the
+// case where there is no client to sign at all.
 //
 // These are EXAMPLES, not legal advice. This repo is public and other MSPs
 // will self-host it, so the disclaimer below is surfaced everywhere a
@@ -157,6 +158,113 @@ Accepted for the Covered Entity by {{signer_name}} on {{accepted_date}}.
 
 Questions about this BAA go to {{msp_name}} at {{msp_email}}.`;
 
+// SHA-4501. The no-known-client case: a public website where there is no
+// signer, no countersignature and no send — continued use IS the acceptance.
+//
+// Both templates above are bilateral agreements and end "Accepted for the
+// Client by {{signer_name}} on {{accepted_date}}", which is exactly wrong
+// here: on the public surface those tokens render as "the Client's
+// authorized signatory" and "the date of acceptance", describing a signature
+// that nobody gives. So this body carries NO signature block. It uses only
+// MSP tokens and the generic client wording, which is what makes it read
+// correctly on /legal, in the embed and in a PDF download, where the reader
+// is whoever happens to be visiting.
+//
+// It does not replace the MSA: section 5 says so, because an MSP that
+// publishes website terms still signs a services agreement with each client,
+// and terms that quietly claimed to govern paid services would contradict it.
+const WEBSITE_TERMS_BODY = `## Website Terms of Use
+
+These Terms of Use (the "Terms") govern access to and use of the website and related public pages operated by **{{msp_legal_name}}** of {{msp_address}} ("we", "us"). Please read them before using the site.
+
+### 1. Acceptance by Use
+
+1.1 By accessing or continuing to use the site, you agree to these Terms. If you do not agree to them, please stop using the site.
+
+1.2 There is nothing to sign. Your continued use of the site after these Terms, or any later version of them, are published is your acceptance of the version then in force.
+
+1.3 Where you also have a signed agreement with us, that agreement — not these Terms — governs the services it covers. See section 5.
+
+### 2. Who We Are
+
+2.1 The site is operated by {{msp_name}}. Our published contact address for notices about the site is {{msp_email}}, and our website is {{msp_website}}.
+
+### 3. Permitted Use
+
+3.1 You may use the site to read about our services, to contact us, and for any other purpose we make available on it.
+
+3.2 You agree not to attempt to gain unauthorised access to the site or to any system or account connected to it, not to interfere with its availability for others, and not to use automated means to collect information from it in a way that places an unreasonable load on it.
+
+3.3 We may suspend or withdraw all or part of the site at any time, with or without notice. We do not undertake that the site will be available uninterrupted.
+
+### 4. Changes to These Terms
+
+4.1 We may change these Terms. The version published on the site is the version in force, and each version carries the date it took effect.
+
+4.2 Where a change is material, we will publish it at least {{terms_change_notice_days}} days before it takes effect, so that anyone relying on the current version has notice of it.
+
+4.3 Earlier versions remain available on the site so you can see what the Terms said when you used it previously. Your continued use of the site after a change takes effect is your acceptance of the changed Terms.
+
+### 5. Services Are Governed Separately
+
+5.1 These Terms cover the site itself. They are not an offer of services, they do not create a services relationship, and they do not amend any agreement we have signed with you.
+
+5.2 Paid services are governed by the Master Service Agreement, order form, quote or other written agreement between us and the client receiving them. Where those terms and these Terms conflict, those terms control for the services they cover.
+
+5.3 Nothing on the site is a quote or a binding price unless it is in a written agreement or quote signed or confirmed by us.
+
+### 6. Our Content
+
+6.1 The content of the site — text, layout, graphics, logos and the selection and arrangement of them — belongs to us or to our licensors, and is protected by copyright and trade mark law.
+
+6.2 You may read, print and share pages of the site for your own information, including a copy of these Terms. Any other substantial reproduction, republication or commercial use needs our written permission.
+
+6.3 Material you send us through the site — an enquiry, a request or a document — stays yours. You give us permission to use it to respond to you and to provide the services you ask about.
+
+### 7. No Professional Advice
+
+7.1 The site is published for general information. It is not technical, security, legal, tax or compliance advice for any particular situation, and it is not a substitute for advice about your own systems or obligations.
+
+7.2 Do not act on the site's content alone where the decision matters. Ask us, or ask your own adviser.
+
+### 8. No Warranty for the Site
+
+8.1 The site and its content are provided as they are. To the extent the law allows, we give no warranty that the site is accurate, complete, current, uninterrupted or free of error.
+
+8.2 This section is about the SITE. Warranties for services we actually perform are in the agreement that covers those services, and this section does not reduce them.
+
+### 9. Limitation of Liability
+
+9.1 To the extent the law allows, we are not liable for indirect, incidental or consequential loss, or for lost profits, revenue, data or goodwill, arising out of your use of the site.
+
+9.2 Nothing in these Terms limits liability that cannot be limited by law, including liability for death or personal injury caused by negligence, or for fraud.
+
+9.3 Liability for services is governed by the agreement that covers those services, not by this section.
+
+### 10. Links to Other Sites
+
+10.1 The site may link to sites we do not operate. We include a link because it may be useful, not as an endorsement, and we are not responsible for the content or practices of a site we do not control.
+
+### 11. Visitors and Privacy
+
+11.1 We keep a record of visits to the pages on which our published agreements appear — the page, the time, and technical details sent by your browser — so that we can show which version of a document was published when it was read.
+
+11.2 We use that record for that purpose and for the security and operation of the site. We do not sell it. Questions about it go to {{msp_email}}.
+
+### 12. Governing Law
+
+12.1 These Terms are governed by the laws of {{venue}}, and the courts of {{venue}} have jurisdiction over any dispute about them.
+
+### 13. General
+
+13.1 If any part of these Terms is unenforceable, the rest continues to apply.
+
+13.2 These Terms are between you and {{msp_legal_name}}. They give no rights to anybody else.
+
+### 14. Contact
+
+Questions about these Terms, or about anything on the site, go to {{msp_name}} at {{msp_email}}.`;
+
 export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
   {
     slug: "msa",
@@ -179,6 +287,17 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       cure_period_days: "30",
     },
     bodyMarkdown: BAA_BODY,
+  },
+  {
+    slug: "website-terms",
+    kind: "website-terms",
+    title: "Website Terms of Use",
+    variables: {
+      // A default to edit, not a rule: the number of days' notice before a
+      // material change takes effect.
+      terms_change_notice_days: "14",
+    },
+    bodyMarkdown: WEBSITE_TERMS_BODY,
   },
 ] as const;
 

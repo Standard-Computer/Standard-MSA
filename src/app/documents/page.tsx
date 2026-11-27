@@ -64,6 +64,9 @@ export default async function DocumentsPage({
           {docs.map((d) => {
             const published = d.versions.filter((v) => v.publishedAt !== null);
             const draft = openDraft(d.versions);
+            // What the row's download points at: the current published
+            // version, or the open draft when nothing is published yet.
+            const latest = published[0] ?? draft;
             return (
               <li key={d.id} className="rounded-lg border border-slate-200 p-4">
                 <div className="flex items-baseline justify-between">
@@ -77,6 +80,23 @@ export default async function DocumentsPage({
                   {published.length > 0 ? `v${published[0].version} published` : "nothing published yet"}
                   {draft ? ` · draft v${draft.version} open` : ""}
                 </p>
+                {/* The one-click download Sean asked for, on the row itself.
+                    It renders the generic (no known client) wording — the
+                    same public-mode text /legal shows — for the published
+                    version if there is one, else for the open draft, which
+                    is labelled as a draft on every page of the file. */}
+                {latest ? (
+                  <p className="mt-2 text-sm">
+                    <a
+                      href={`/documents/${d.slug}/versions/${latest.version}/pdf`}
+                      className="text-blue-700 hover:underline"
+                    >
+                      Download v{latest.version} PDF
+                      {latest.publishedAt === null ? " (draft)" : ""}
+                    </a>
+                    <span className="text-slate-500"> · generic wording, no client named</span>
+                  </p>
+                ) : null}
               </li>
             );
           })}

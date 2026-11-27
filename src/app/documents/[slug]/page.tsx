@@ -110,6 +110,14 @@ export default async function DocumentPage({
                       <Link href={`/documents/${doc.slug}/draft`} className="text-blue-700">
                         Edit
                       </Link>
+                      {/* Every version row downloads, drafts included — the
+                          file says DRAFT on its cover and in every footer. */}
+                      <a
+                        href={`/documents/${doc.slug}/versions/${v.version}/pdf`}
+                        className="text-blue-700"
+                      >
+                        PDF
+                      </a>
                       <form action={publishDraftAction}>
                         <input type="hidden" name="slug" value={doc.slug} />
                         <input type="hidden" name="versionId" value={v.id} />
@@ -119,9 +127,17 @@ export default async function DocumentPage({
                       </form>
                     </span>
                   ) : (
-                    <Link href={`/legal/${doc.slug}/${v.version}`} className="text-blue-700">
-                      View
-                    </Link>
+                    <span className="flex gap-2">
+                      <Link href={`/legal/${doc.slug}/${v.version}`} className="text-blue-700">
+                        View
+                      </Link>
+                      <a
+                        href={`/documents/${doc.slug}/versions/${v.version}/pdf`}
+                        className="text-blue-700"
+                      >
+                        PDF
+                      </a>
+                    </span>
                   )}
                 </div>
                 {v.changelog ? <p className="mt-1 text-slate-600">{v.changelog}</p> : null}
@@ -131,7 +147,19 @@ export default async function DocumentPage({
         )}
       </section>
 
-      <p className="mt-8 text-xs text-slate-500">
+      <p className="mt-6 text-xs text-slate-500">
+        Every <span className="font-medium">PDF</span> above is the version as the public sees it:
+        your MSP details are filled in and client and signer details use the generic wording (&ldquo;the
+        Client&rdquo;, &ldquo;the date of acceptance&rdquo;), because a download has no recipient. It is the same
+        text the embed and{" "}
+        <Link href={`/legal/${doc.slug}`} className="text-blue-700">
+          /legal/{doc.slug}
+        </Link>{" "}
+        show when there is no known client — so this is how to read and keep what your website will
+        say. A per-recipient copy stays on the send itself.
+      </p>
+
+      <p className="mt-4 text-xs text-slate-500">
         Publishing makes a version public and immutable; it never emails anybody. To tell prior
         recipients about an update, use{" "}
         <Link href="/sends/notices" className="text-blue-700">

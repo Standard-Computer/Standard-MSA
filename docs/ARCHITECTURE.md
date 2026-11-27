@@ -60,6 +60,9 @@ add-only). The shape, by area:
   acceptance-sourced) with three render modes: `blanks` (labelled blanks),
   `public` (MSP values filled, recipient values generic — the only mode the
   public site uses, so client data can never leak there), `filled` (per-send).
+  The PDF download (SHA-4501) is `public` mode on every surface it is offered
+  from, including the operator's own: `src/lib/legal/pdfDocument.ts` takes no
+  mode argument, so no call site can ask it for a filled one.
 - **Recipients/contacts** — `Recipient`: email, full name, company, legal
   name, address, phone. Deliberately flat — no sites, CRM stages or quote
   links. API and ad-hoc sends create these on the fly from as little as an
@@ -107,6 +110,7 @@ is already landed; lanes extend without editing each other's files.
 | Email delivery | SHA-2958 | `src/lib/email/**` (contract, gates, failure classification, smtp2go/sendgrid/smtp transports), `src/app/settings/email/**`, `tests/email/**` |
 | Sends & acceptance | SHA-2959 | `src/lib/sends/**` (engine, evidence, signature, consent, verify, pdf), `src/lib/notices/**`, `src/app/a/[token]/**` (public signing), `src/app/sends/**` (operator UI), `src/app/api/cron/sweep/**`, `src/components/sends/**`, `tests/sends/**` |
 | Public API + packaging | SHA-2960 | `src/app/api/v1/**`, `src/lib/api/**`, `docs/API.md`, `tests/api/**` |
+| Operator shell + navigation | SHA-4496 | `src/lib/nav/**`, `src/components/nav/**`, `tests/nav/**`, and the shared `src/app/layout.tsx` + `src/app/page.tsx` (see the navigation note below) |
 
 Cross-lane contracts (who calls whom):
 
@@ -119,15 +123,42 @@ Cross-lane contracts (who calls whom):
 Shared-file rules: `prisma/schema.prisma` is pre-seeded with the full v0
 model — lanes only touch it for genuinely new columns, add-only, one lane at
 a time. `package.json` dep additions are fine (JSON merges cleanly); note
-them in the PR description. `src/app/layout.tsx` and the home page belong to
-SHA-2956; other lanes add routes, not nav edits.
+them in the PR description.
+
+**Navigation — superseded 2026-11-27 (SHA-4496, GH #17).** This paragraph
+used to end: *"`src/app/layout.tsx` and the home page belong to SHA-2956;
+other lanes add routes, not nav edits."* That was a v0 scaffolding rule to
+stop five lanes editing one file at once, and it worked — at the cost of
+`/embed` and `/settings/email` shipping complete and then sitting unreachable
+from the console, because no lane was allowed to link them and no rule said
+anybody had to. Sean filed GH #17 on it. There is now a shared operator
+shell, so **the nav is not a file any more**:
+
+- Add a module to **`src/lib/nav/operatorNav.ts`** (`NAV_LINKS` for the left
+  rail, `MODULE_CARDS` for the home dashboard). That is the whole edit; no
+  lane touches the layout or the home page to get linked.
+- `src/app/layout.tsx`, `src/app/page.tsx` and
+  `src/components/nav/OperatorShell.tsx` render *from* that table. They stay
+  shared files — one lane at a time, as before.
+- `tests/nav/links.test.ts` walks `src/app` and **fails when an operator
+  screen is neither in the nav nor a sub-screen of something that is.** A
+  screen that is only ever reached from inside another one goes in
+  `NAV_EXEMPT_SCREENS` with the reason. So "add a route, not nav edits" is
+  now exactly backwards: adding an operator screen means claiming a nav
+  destination for it, the same bargain `surfaces.ts` already strikes for auth.
 
 ## Request surfaces
 
-- **Public, no auth:** `/legal`, `/legal/[slug]` (+version/history/compare/
-  pdf), `/legal/embed.js`, `/legal/embed/frame`, `/msa/[token]` signing
-  pages, `/login`, and `/setup` (first boot, SHA-4455 — see below). Public
-  pages render variables in `public` mode only.
+- **Public, no auth:** `/legal`, `/legal/[slug]` (+version/history/compare),
+  `/legal/[slug]/pdf` and `/legal/[slug]/[version]/pdf` (the PDF downloads,
+  SHA-4501 — published versions only, since both resolve through
+  `src/lib/legal/documents.ts`), `/legal/embed.js`, `/legal/embed/frame`,
+  `/msa/[token]` signing pages, `/login`, and `/setup` (first boot, SHA-4455
+  — see below). Public pages render variables in `public` mode only.
+  The operator's own download, `/documents/[slug]/versions/[version]/pdf`, is
+  the one PDF route that is **gated** — it is also the only one that serves a
+  draft — and it refuses as a `status` rather than a redirect, because a
+  download cannot use a login form.
 - **Liveness:** `GET /api/health` returns a fixed `{"ok":true}` to anyone.
   It is the only path that answers `200` in every state of the app, which is
   what a platform healthcheck needs; it deliberately reports no version, no
@@ -138,6 +169,15 @@ SHA-2956; other lanes add routes, not nav edits.
   server action calls the guard as its first statement.
   Nothing in the gate is a client-side redirect: a redirect that has already
   shipped the HTML has already shipped the send token.
+
+  The operator chrome reads the same registry (SHA-4496):
+  `shouldRenderOperatorNav()` in `src/lib/nav/operatorNav.ts` asks
+  `classifyPath()` whether a path is an operator *screen*, so the left nav
+  appears exactly where the gate applies and nowhere else. The public legal
+  site, `/msa/[token]`, `/login` and `/setup` render as they always did. The
+  nav itself enforces nothing and renders no data — it is a fixed list of
+  links, identical for every request, and the page's own `requireOperator()`
+  still runs first.
 
   This supersedes the earlier note here that the auth story was "kept
   minimal; hardening is explicitly on the roadmap, not blocking lanes". It
@@ -206,5 +246,13 @@ visit redirects to onboarding until `MspIdentity` exists. Upgrades:
 volume's SQLite file. No external services required; email is optional until
 a provider is configured (the app degrades to link-sharing mode with every
 send gate storing "emails not configured" as the skip reason).
+
+PDF generation (SHA-4501) stays inside that story: `pdf-lib` is pure
+JavaScript, pinned exact, MIT, with no native build and no install script,
+and only the base-14 fonts are used — so no headless browser, no font file
+and no rendering service joins the container. The cost is that those fonts
+can only draw WinAnsi, which is why `src/lib/legal/pdfText.ts` filters every
+string before it is measured: without it an operator pasting a name outside
+Latin-1 would 500 the download of their own agreement.
 
 Worked by: Viper CTO (SF2 / SHA).

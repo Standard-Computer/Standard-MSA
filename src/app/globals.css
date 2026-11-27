@@ -2,6 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The collapsed left nav (SHA-4496, GH #17 AC 3-4).
+ *
+ * Driven by a class on <html> rather than by React state, because the state
+ * is restored by an inline pre-paint script (src/lib/nav/collapse.ts) and CSS
+ * is the only thing that can act on it before React hydrates. React still
+ * owns `aria-expanded`; this owns what you see.
+ *
+ * `.nav-label` is CLIPPED rather than hidden when collapsed — same technique
+ * as Tailwind's `sr-only`. A collapsed rail is ten icons, and
+ * `display: none` on the labels would strip every link of its accessible
+ * name. Clipping keeps the name and loses only the pixels.
+ */
+@layer components {
+  .nav-rail {
+    width: 15rem;
+  }
+
+  html.nav-collapsed .nav-rail {
+    width: 3.5rem;
+  }
+
+  html.nav-collapsed .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Nothing to indent under when there are no labels to indent. */
+  html.nav-collapsed .nav-child {
+    padding-left: 0.75rem;
+  }
+
+  /* The toggle points the way it will go: back when expanded, forward when
+   * collapsed. Transform only, so it costs no layout. */
+  html.nav-collapsed .nav-chevron {
+    transform: rotate(180deg);
+  }
+}
+
 /* Pin the operator console to light mode (Sean's ruling, GH #19 AC 1).
  *
  * The page itself was never at risk — the root layout hard-codes
