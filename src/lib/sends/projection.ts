@@ -79,6 +79,47 @@ export async function projectDeliverySignals(send: SendWithTrail): Promise<numbe
   return serializeByKey(`send-projection:${send.id}`, () => projectUnguarded(send));
 }
 
+/**
+ * Project for a whole list of sends — the operator list screen (SHA-4500),
+ * which shows Received / Opened / Clicked per recipient and so needs the
+ * same trail the detail screen needs.
+ *
+ * One query decides which of these sends have any outbound email at all, and
+ * only those pay for a projection pass. That matters because the alternative
+ * is three queries per row on a screen that renders every send: a fresh
+ * install with twenty sends and no mail configured would do sixty pointless
+ * round trips per page load, and here it does one.
+ *
+ * Sequential, not `Promise.all`: these are independent sends, so there is no
+ * correctness reason to serialise them, but a list of a thousand sends
+ * firing a thousand concurrent projections at once would exhaust the
+ * connection pool — and the page is `force-dynamic`, so that is per request.
+ *
+ * Returns how many events were appended across all of them.
+ */
+export async function projectDeliverySignalsForSends(
+  sends: readonly SendWithTrail[],
+): Promise<number> {
+  if (sends.length === 0) return 0;
+
+  const outbounds = await prisma.emailOutbound.findMany({
+    where: { toAddress: { in: sends.map((s) => s.recipient.email) }, kind: SEND_EMAIL_KIND },
+    select: { refJson: true },
+  });
+  const withMail = new Set<number>();
+  for (const outbound of outbounds) {
+    const id = refSendId(outbound.refJson);
+    if (id !== null) withMail.add(id);
+  }
+
+  let projected = 0;
+  for (const send of sends) {
+    if (!withMail.has(send.id)) continue;
+    projected += await projectDeliverySignals(send);
+  }
+  return projected;
+}
+
 async function projectUnguarded(send: SendWithTrail): Promise<number> {
   const outbounds = await prisma.emailOutbound.findMany({
     where: { toAddress: send.recipient.email, kind: SEND_EMAIL_KIND },
