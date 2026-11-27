@@ -42,6 +42,15 @@ function utc(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 16);
 }
 
+/**
+ * Month-to-minute form for the timestamp cells. Seven of these sit side by
+ * side, so the year moves onto each cell's title attribute to keep the table
+ * inside a 1440px viewport without a scrollbar.
+ */
+function utcShort(date: Date): string {
+  return utc(date).slice(5);
+}
+
 function groupByDocument(sends: SendWithTrail[]) {
   const groups = new Map<number, { title: string; slug: string; sends: SendWithTrail[] }>();
   for (const send of sends) {
@@ -129,86 +138,94 @@ export default async function SendsPage({
             </h2>
             <FunnelRow funnel={funnelFor(group.sends)} />
 
-            <table className="mt-4 w-full border-collapse text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-300 text-slate-500">
-                  <th className="p-2">Recipient</th>
-                  <th className="p-2">Version</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2">Created (UTC)</th>
-                  {RECIPIENT_COLUMNS.map((column) => (
-                    <th key={column.event} className="p-2">
-                      {column.label}
-                    </th>
-                  ))}
-                  <th className="p-2">Outcome</th>
-                  <th className="p-2">Evidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {group.sends.map((send) => {
-                  const first = firstEventTimes(send.events);
-                  const seconds = readSeconds(send.events);
-                  return (
-                    <tr key={send.id} className="border-b border-slate-100">
-                      <td className="p-2">
-                        <Link href={`/sends/${send.id}`} className="text-blue-700">
-                          {send.recipient.email}
-                        </Link>
-                        {send.recipient.fullName ? (
-                          <span className="text-slate-500"> · {send.recipient.fullName}</span>
-                        ) : null}
-                      </td>
-                      <td className="p-2">v{send.documentVersion.version}</td>
-                      <td className={`p-2 font-medium ${STATUS_CLASS[send.status] ?? "text-slate-700"}`}>
-                        {send.status}
-                      </td>
-                      <td className="p-2 whitespace-nowrap">{utc(send.createdAt)}</td>
-                      {RECIPIENT_COLUMNS.map((column) => {
-                        const at = first[column.event];
-                        return (
-                          <td key={column.event} className="p-2 whitespace-nowrap">
-                            {at ? (
-                              <>
-                                {utc(at)}
-                                {column.event === "viewed" && seconds > 0 ? (
-                                  <span className="text-slate-500"> · {seconds}s</span>
-                                ) : null}
-                              </>
-                            ) : (
-                              <span className="text-slate-400">—</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="p-2 whitespace-nowrap">
-                        {first.declined || first.bounced ? (
-                          <>
-                            {first.declined ? (
-                              <div className="text-amber-700">declined {utc(first.declined)}</div>
-                            ) : null}
-                            {first.bounced ? (
-                              <div className="text-red-700">bounced {utc(first.bounced)}</div>
-                            ) : null}
-                          </>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        {send.acceptance ? (
-                          <Link href={`/sends/${send.id}/evidence`} className="text-blue-700">
-                            download
+            <div className="overflow-x-auto">
+              <table className="mt-4 w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-300 text-slate-500">
+                    <th className="px-1.5 py-2">Recipient</th>
+                    <th className="px-1.5 py-2">Version</th>
+                    <th className="px-1.5 py-2">Status</th>
+                    <th className="px-1.5 py-2">Created (UTC)</th>
+                    {RECIPIENT_COLUMNS.map((column) => (
+                      <th key={column.event} className="px-1.5 py-2">
+                        {column.label}
+                      </th>
+                    ))}
+                    <th className="px-1.5 py-2">Outcome</th>
+                    <th className="px-1.5 py-2">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.sends.map((send) => {
+                    const first = firstEventTimes(send.events);
+                    const seconds = readSeconds(send.events);
+                    return (
+                      <tr key={send.id} className="border-b border-slate-100">
+                        <td className="px-1.5 py-2">
+                          <Link href={`/sends/${send.id}`} className="text-blue-700">
+                            {send.recipient.email}
                           </Link>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                          {send.recipient.fullName ? (
+                            <span className="text-slate-500"> · {send.recipient.fullName}</span>
+                          ) : null}
+                        </td>
+                        <td className="px-1.5 py-2">v{send.documentVersion.version}</td>
+                        <td className={`px-1.5 py-2 font-medium ${STATUS_CLASS[send.status] ?? "text-slate-700"}`}>
+                          {send.status}
+                        </td>
+                        <td className="px-1.5 py-2 whitespace-nowrap">
+                          <span title={send.createdAt.toISOString()}>{utcShort(send.createdAt)}</span>
+                        </td>
+                        {RECIPIENT_COLUMNS.map((column) => {
+                          const at = first[column.event];
+                          return (
+                            <td key={column.event} className="px-1.5 py-2 whitespace-nowrap">
+                              {at ? (
+                                <>
+                                  <span title={at.toISOString()}>{utcShort(at)}</span>
+                                  {column.event === "viewed" && seconds > 0 ? (
+                                    <span className="text-slate-500"> · {seconds}s</span>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="px-1.5 py-2 whitespace-nowrap">
+                          {first.declined || first.bounced ? (
+                            <>
+                              {first.declined ? (
+                                <div className="text-amber-700" title={first.declined.toISOString()}>
+                                  declined {utcShort(first.declined)}
+                                </div>
+                              ) : null}
+                              {first.bounced ? (
+                                <div className="text-red-700" title={first.bounced.toISOString()}>
+                                  bounced {utcShort(first.bounced)}
+                                </div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-1.5 py-2">
+                          {send.acceptance ? (
+                            <Link href={`/sends/${send.id}/evidence`} className="text-blue-700">
+                              download
+                            </Link>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </section>
         ))
       )}
