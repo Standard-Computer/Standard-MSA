@@ -146,6 +146,51 @@ export function funnelFor(sends: readonly { events: readonly { type: string }[] 
   return funnel;
 }
 
+// ── Per-recipient trail columns (SHA-4504 / GH #21) ─────────────────────────
+//
+// The status column cannot show "clicked" — clicked and viewed fold onto
+// opened above, on purpose. These helpers are the other read of the same
+// append-only trail: WHEN each stage first happened, per recipient, derived
+// on render and never stored, so the evidence rules and the monotonic
+// roll-up stay untouched.
+
+/** First time each event type occurred in a trail, or null when it never did. */
+export type FirstEventTimes = Record<SendEventType, Date | null>;
+
+/**
+ * Earliest occurrence per event type. Scans for the minimum rather than
+ * trusting trail order, so a provider webhook projected late with an earlier
+ * `occurredAt` still reports the true first time.
+ */
+export function firstEventTimes(
+  events: readonly { type: string; occurredAt: Date }[],
+): FirstEventTimes {
+  const first = {} as FirstEventTimes;
+  for (const type of SEND_EVENT_TYPES) first[type] = null;
+  for (const event of events) {
+    if (!isSendEventType(event.type)) continue;
+    const held = first[event.type];
+    if (held === null || event.occurredAt < held) first[event.type] = event.occurredAt;
+  }
+  return first;
+}
+
+/**
+ * The per-recipient timestamp columns on /sends, in display order. "Received"
+ * is Sean's word for the `delivered` event and "Signed" for `accepted`; the
+ * labels are UI vocabulary, the events are the schema's. Declined and bounced
+ * are deliberately not columns — they are rare terminal outcomes, shown as a
+ * compact per-recipient trail cell instead.
+ */
+export const RECIPIENT_COLUMNS = [
+  { label: "Sent", event: "sent" },
+  { label: "Received", event: "delivered" },
+  { label: "Opened", event: "opened" },
+  { label: "Clicked", event: "clicked" },
+  { label: "Viewed", event: "viewed" },
+  { label: "Signed", event: "accepted" },
+] as const satisfies readonly { label: string; event: SendEventType }[];
+
 /** Total read time across a send's `viewed` events, in seconds. */
 export function readSeconds(events: readonly { type: string; metaJson: string }[]): number {
   let total = 0;
