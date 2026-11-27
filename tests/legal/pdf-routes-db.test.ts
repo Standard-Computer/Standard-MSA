@@ -324,3 +324,63 @@ test("the operator download is NOT recorded as a public visit", async () => {
   await getOperator("msa", "3", cookie);
   assert.equal(await prisma.legalVisit.count(), before);
 });
+
+test("REGRESSION: the cover cites the host the reader used, not the container's bind address", async () => {
+  // Shipped bug, found on the Railway production deploy and not in CI: the
+  // cover line reading "where to find the live text" said
+  // https://0.0.0.0:8080/legal/msa/1, because the handler took
+  // `new URL(req.url).origin` and that is what the Node server BOUND to.
+  // Every test above fetches the handler on the same hostname it declares,
+  // which is exactly why none of them could see it.
+  const res = await legalCurrentPdf.GET(
+    new Request("http://0.0.0.0:8080/legal/msa/pdf", {
+      headers: { "x-forwarded-host": "legal.acme.test", "x-forwarded-proto": "https" },
+    }),
+    { params: Promise.resolve({ slug: "msa" }) },
+  );
+  assert.equal(res.status, 200);
+  const text = pdfText(await asBytes(res));
+  assert.ok(text.includes("https://legal.acme.test/legal/msa/2"), `cover URL missing: ${text.slice(0, 200)}`);
+  assert.ok(!text.includes("0.0.0.0"), "a bind address is never a hostname a reader can reach");
+});
+
+test("REGRESSION: with no proxy header, a wildcard bind falls back to APP_BASE_URL", async () => {
+  // The same deploy, minus the forwarded headers: the operator's declared
+  // public base is the last thing that still beats citing 0.0.0.0.
+  const res = await legalVersionPdf.GET(new Request("http://0.0.0.0:8080/legal/msa/1/pdf"), {
+    params: Promise.resolve({ slug: "msa", version: "1" }),
+  });
+  assert.equal(res.status, 200);
+  const text = pdfText(await asBytes(res));
+  assert.ok(text.includes(`${BASE}/legal/msa/1`), "APP_BASE_URL is the fallback");
+  assert.ok(!text.includes("0.0.0.0"));
+});
+
+test("REGRESSION: the operator PDF route derives its origin the same way", async () => {
+  const res = await documentPdf.GET(
+    new Request("http://0.0.0.0:8080/documents/msa/versions/2/pdf", {
+      headers: { cookie, "x-forwarded-host": "ops.acme.test", "x-forwarded-proto": "https" },
+    }),
+    { params: Promise.resolve({ slug: "msa", version: "2" }) },
+  );
+  assert.equal(res.status, 200);
+  const text = pdfText(await asBytes(res));
+  assert.ok(text.includes("https://ops.acme.test/legal/msa/2"), "the operator's own host");
+  assert.ok(!text.includes("0.0.0.0"));
+});
+
+test("REGRESSION: an injected Host header never reaches the cover of a saved agreement", async () => {
+  // Nothing guarantees a proxy is in front of a self-hosted install, so
+  // `x-forwarded-host` is visitor-controllable in that deployment — and this
+  // output is printed into a PDF of a legal agreement that gets forwarded on.
+  const res = await legalCurrentPdf.GET(
+    new Request(`${BASE}/legal/msa/pdf`, {
+      headers: { "x-forwarded-host": "evil.test/phish" },
+    }),
+    { params: Promise.resolve({ slug: "msa" }) },
+  );
+  assert.equal(res.status, 200);
+  const text = pdfText(await asBytes(res));
+  assert.ok(!text.includes("evil.test"), "a malformed host is dropped, not printed");
+  assert.ok(text.includes(`${BASE}/legal/msa/2`), "and the sound origin is used instead");
+});

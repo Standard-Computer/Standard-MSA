@@ -15,6 +15,7 @@
 
 import { guardOperatorRequest } from "@/lib/auth/guard";
 import { prisma } from "@/lib/db";
+import { requestOrigin } from "@/lib/http/requestOrigin";
 import { documentVersionPdf, pdfResponse } from "@/lib/legal/pdfDocument";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,7 @@ export async function GET(
   if (ver === null) return new Response("Not found", { status: 404 });
 
   const download = await documentVersionPdf(doc, ver, {
-    requestOrigin: new URL(req.url).origin,
+    requestOrigin: requestOrigin(req),
   });
   return pdfResponse(download);
 }

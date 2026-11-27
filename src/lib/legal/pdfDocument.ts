@@ -39,10 +39,14 @@ function effectiveDate(version: LegalDocumentVersion): string | null {
  *
  * `generatedAt` is the caller's clock, threaded through so the renderer stays
  * deterministic for tests. `requestOrigin` is the origin the download was
- * fetched from — the REQUEST's own, not APP_BASE_URL, for the reason
+ * fetched from — the REQUEST's own ahead of APP_BASE_URL, for the reason
  * src/app/legal/embed/frame/route.ts gives: a self-hosted install is reached
  * on whatever hostname its operator chose, and a printed copy should cite the
- * one the reader used.
+ * one the reader used. Callers derive it with src/lib/http/requestOrigin.ts
+ * rather than from `req.url` directly: behind a proxy `req.url` is the
+ * container's bind address, which shipped a cover line citing
+ * https://0.0.0.0:8080 on the Railway deploy. A null origin — nothing
+ * reachable could be determined — cites nothing, per the note below.
  */
 export async function documentVersionPdf(
   doc: Pick<LegalDocument, "slug" | "title">,

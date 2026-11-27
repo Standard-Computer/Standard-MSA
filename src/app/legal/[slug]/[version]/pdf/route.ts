@@ -6,6 +6,7 @@
 // version alike.
 
 import { publishedVersion } from "@/lib/legal/documents";
+import { requestOrigin } from "@/lib/http/requestOrigin";
 import { documentVersionPdf, pdfResponse } from "@/lib/legal/pdfDocument";
 import { recordPageVisit } from "@/lib/visits/record";
 
@@ -34,7 +35,7 @@ export async function GET(
   await recordPageVisit(`/legal/${doc.slug}/${ver.version}/pdf`, doc.slug, ver.version, req.headers);
 
   const download = await documentVersionPdf(doc, ver, {
-    requestOrigin: new URL(req.url).origin,
+    requestOrigin: requestOrigin(req),
   });
   return pdfResponse(download);
 }
