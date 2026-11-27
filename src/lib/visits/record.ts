@@ -10,10 +10,22 @@ import { clientIpFrom, geoFromHeaders, hashIp } from "./visits";
  * (SHA-2957). The embed frame uses the first-party beacon instead, which
  * additionally carries the read-timer; a plain page view records once at
  * render with no client script.
+ *
+ * `requestHeaders` is for callers that HAVE a Request — the PDF route
+ * handlers (SHA-4501). Without it this reaches for next/headers, which
+ * exists only inside a request scope, so the catch below swallows the throw
+ * and the visit vanishes when a test calls the real handler directly. Same
+ * split, and the same reason, as src/lib/auth/guard.ts (Request) against
+ * src/lib/auth/page.ts (next/headers).
  */
-export async function recordPageVisit(path: string, slug?: string, version?: number): Promise<void> {
+export async function recordPageVisit(
+  path: string,
+  slug?: string,
+  version?: number,
+  requestHeaders?: Headers,
+): Promise<void> {
   try {
-    const h = await headers();
+    const h = requestHeaders ?? (await headers());
     const get = (name: string) => h.get(name);
     const settings = await legalSettings();
     const ip = clientIpFrom(get);

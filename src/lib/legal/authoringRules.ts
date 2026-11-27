@@ -33,10 +33,20 @@ export function isValidDocumentSlug(raw: unknown): raw is string {
   );
 }
 
-/** Known document kinds get labels; anything else renders as itself. */
+/**
+ * Known document kinds get labels; anything else renders as itself.
+ *
+ * A LABEL table, not a behaviour table (principle 1): nothing in this app
+ * branches on `kind`, so `website-terms` is published, rendered, downloaded
+ * and sent by exactly the code the MSA goes through. The only difference a
+ * kind makes is the words in this map.
+ */
 export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   msa: "Master Service Agreement",
   "hipaa-baa": "HIPAA Business Associate Agreement",
+  // SHA-4501: the no-known-client case — a website where continued use is
+  // the acceptance, so there is no signer and no countersignature.
+  "website-terms": "Website Terms of Use",
 };
 
 export function documentKindLabel(kind: string): string {

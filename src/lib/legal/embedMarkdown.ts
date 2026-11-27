@@ -36,8 +36,13 @@ const PROCESSOR = unified().use(remarkParse).use(remarkGfm);
  *
  * Checked on the SCHEME rather than by trying to parse, because a relative
  * path is legitimate here and is not a parseable URL on its own.
+ *
+ * Exported for ./pdfBlocks.ts, which prints a link's URL next to its label.
+ * One implementation, deliberately: a second copy of this predicate is how
+ * one renderer quietly ends up with the laxer rule (the posture ./html.ts
+ * states for the escaper).
  */
-function safeUrl(raw: string | null | undefined): string | null {
+export function safeUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.trim();
   if (s === "") return null;

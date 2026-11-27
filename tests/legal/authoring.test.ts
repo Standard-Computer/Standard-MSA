@@ -9,6 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  DOCUMENT_KIND_LABELS,
   DOCUMENT_SLUG_RE,
   documentKindLabel,
   isValidDocumentSlug,
@@ -71,6 +72,7 @@ test("serializeVersionDefaults round-trips through parseVersionDefaults, lowerca
 test("kind labels: known kinds get prose, unknown kinds pass through", () => {
   assert.equal(documentKindLabel("msa"), "Master Service Agreement");
   assert.equal(documentKindLabel("hipaa-baa"), "HIPAA Business Associate Agreement");
+  assert.equal(documentKindLabel("website-terms"), "Website Terms of Use");
   assert.equal(documentKindLabel("nda"), "nda");
 });
 
@@ -96,15 +98,35 @@ const BLANK_IDENTITY: MspValues = {
   venue: null,
 };
 
-test("both SHA-2970 documents ship: an MSA and a HIPAA BAA", () => {
+test("the starter set ships: the two SHA-2970 documents and the SHA-4501 website terms", () => {
   assert.deepEqual(
     STARTER_TEMPLATES.map((t) => t.kind).sort(),
-    ["hipaa-baa", "msa"],
+    // SHA-2970 put the MSA and the BAA in v1; SHA-4501 added the website
+    // terms for the no-known-client case, where continued use is the
+    // acceptance and there is nobody to sign.
+    ["hipaa-baa", "msa", "website-terms"],
   );
   assert.equal(starterTemplate("msa")?.title, "Master Service Agreement");
   assert.equal(starterTemplate("hipaa-baa")?.title, "HIPAA Business Associate Agreement");
+  assert.equal(starterTemplate("website-terms")?.title, "Website Terms of Use");
   assert.equal(starterTemplate("nope"), null);
   assert.match(TEMPLATE_DISCLAIMER, /not legal advice/);
+});
+
+test("every starter template's kind has a label, and no code branches on one", () => {
+  // Principle 1: a kind is a LABEL, never behaviour. Every template's kind
+  // must therefore be named in DOCUMENT_KIND_LABELS…
+  for (const t of STARTER_TEMPLATES) {
+    assert.notEqual(
+      DOCUMENT_KIND_LABELS[t.kind],
+      undefined,
+      `${t.kind} needs a DOCUMENT_KIND_LABELS entry`,
+    );
+    assert.equal(documentKindLabel(t.kind), DOCUMENT_KIND_LABELS[t.kind]);
+  }
+  // …and an unknown kind must still render as itself rather than fall over,
+  // which is what makes an MSP's own document type work with no code change.
+  assert.equal(documentKindLabel("sla"), "sla");
 });
 
 test("every template renders through the public pipeline with no raw tokens and no unset blanks", () => {

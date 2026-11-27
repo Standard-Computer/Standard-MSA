@@ -48,6 +48,12 @@ export default async function LegalDocumentPage({
       <p className="mt-1 text-sm text-slate-500">
         v{current.version}
         {current.publishedAt ? ` · effective ${current.publishedAt.toISOString().slice(0, 10)}` : ""}
+        {" · "}
+        {/* A reader who wants to keep what they are reading (SHA-4501). The
+            same public-mode text as this page, as a file. */}
+        <a href={`/legal/${doc.slug}/pdf`} className="text-blue-700">
+          Download PDF
+        </a>
       </p>
       <div dangerouslySetInnerHTML={{ __html: html }} />
       {history.length > 0 && (

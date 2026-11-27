@@ -73,6 +73,26 @@ export const SURFACES: readonly Surface[] = [
       "here (src/lib/sends/tokens.ts) — there is deliberately no recipient login.",
   },
   {
+    pattern: "/legal/[slug]/pdf",
+    kind: "public",
+    because:
+      "A PDF of the CURRENT published version (SHA-4501) — the download of " +
+      "the page above it, for a visitor who wants to keep what they read. " +
+      "Rendered in `public` mode through src/lib/legal/pdfDocument.ts, which " +
+      "takes no mode argument and resolves the version through " +
+      "publishedDocument(), so a draft has no more existence here than on " +
+      "the page. Listed ahead of /legal/** only to say so; the entry below " +
+      "would classify it the same way.",
+  },
+  {
+    pattern: "/legal/[slug]/[version]/pdf",
+    kind: "public",
+    because:
+      "The same download for one historical PUBLISHED version (SHA-4501). A " +
+      "customer who accepted v1 can keep a copy of v1; publishedVersion() " +
+      "refuses a draft.",
+  },
+  {
     pattern: "/legal/**",
     kind: "public",
     because: "The MSP's public legal site, including the embed script and frame.",
@@ -146,6 +166,14 @@ export const SURFACES: readonly Surface[] = [
   { pattern: "/embed", kind: "operator", refusal: "redirect" },
   { pattern: "/settings/**", kind: "operator", refusal: "redirect" },
   { pattern: "/documents", kind: "operator", refusal: "redirect" },
+  // Specific before general, as with the evidence download below: a PDF is a
+  // file, so an unauthenticated caller gets a 401 rather than a 303 to an
+  // HTML form it cannot use (SHA-4501).
+  {
+    pattern: "/documents/[slug]/versions/[version]/pdf",
+    kind: "operator",
+    refusal: "status",
+  },
   { pattern: "/documents/**", kind: "operator", refusal: "redirect" },
   { pattern: "/sends", kind: "operator", refusal: "redirect" },
   { pattern: "/sends/new", kind: "operator", refusal: "redirect" },
