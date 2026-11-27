@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 
 import {
   FUNNEL_STAGES,
+  RECIPIENT_COLUMNS,
+  SEND_EVENT_TYPES,
   advanceStatus,
+  firstEventTimes,
   funnelFor,
   isSendEventType,
   readSeconds,
@@ -73,6 +76,93 @@ test("the funnel counts each stage once per send, from the trail not the status"
   const empty = funnelFor([]);
   assert.equal(empty.total, 0);
   for (const stage of FUNNEL_STAGES) assert.equal(empty[stage], 0);
+});
+
+// ── Per-recipient trail columns (SHA-4504 / GH #21) ─────────────────────────
+
+const at = (iso: string) => new Date(iso);
+const timed = (...pairs: [string, string][]) =>
+  pairs.map(([type, iso]) => ({ type, occurredAt: at(iso) }));
+
+test("a delivered+opened+clicked+accepted trail shows all four columns with first-event times", () => {
+  // AC 6's first fixture: the row Sean asked for — received, opened, clicked
+  // and signed all visible per recipient, each with its first-event time.
+  const first = firstEventTimes(
+    timed(
+      ["created", "2026-11-27T10:00:00Z"],
+      ["sent", "2026-11-27T10:01:00Z"],
+      ["delivered", "2026-11-27T10:02:00Z"],
+      ["opened", "2026-11-27T10:05:00Z"],
+      ["clicked", "2026-11-27T10:06:00Z"],
+      ["accepted", "2026-11-27T10:10:00Z"],
+    ),
+  );
+  assert.deepEqual(first.delivered, at("2026-11-27T10:02:00Z"));
+  assert.deepEqual(first.opened, at("2026-11-27T10:05:00Z"));
+  assert.deepEqual(first.clicked, at("2026-11-27T10:06:00Z"));
+  assert.deepEqual(first.accepted, at("2026-11-27T10:10:00Z"));
+  assert.equal(first.declined, null);
+  assert.equal(first.bounced, null);
+});
+
+test("a send with only `sent` shows every other column empty", () => {
+  const first = firstEventTimes(timed(["sent", "2026-11-27T10:01:00Z"]));
+  assert.deepEqual(first.sent, at("2026-11-27T10:01:00Z"));
+  for (const type of SEND_EVENT_TYPES) {
+    if (type !== "sent") assert.equal(first[type], null, `${type} must be empty`);
+  }
+});
+
+test("clicked is visible per recipient even though the status stays opened", () => {
+  // The whole point of the column: status folds clicked onto opened, so only
+  // the trail can show it.
+  const trail = timed(
+    ["created", "2026-11-27T10:00:00Z"],
+    ["sent", "2026-11-27T10:01:00Z"],
+    ["opened", "2026-11-27T10:05:00Z"],
+    ["clicked", "2026-11-27T10:06:00Z"],
+  );
+  assert.equal(rollUpStatus(trail), "opened");
+  assert.deepEqual(firstEventTimes(trail).clicked, at("2026-11-27T10:06:00Z"));
+});
+
+test("the FIRST occurrence wins, even when a late projection lands out of order", () => {
+  const first = firstEventTimes(
+    timed(
+      ["opened", "2026-11-27T10:05:00Z"],
+      ["opened", "2026-11-27T11:00:00Z"],
+      // A provider webhook projected after the opens, carrying an earlier time.
+      ["delivered", "2026-11-27T10:02:00Z"],
+      ["delivered", "2026-11-27T10:30:00Z"],
+    ),
+  );
+  assert.deepEqual(first.opened, at("2026-11-27T10:05:00Z"));
+  assert.deepEqual(first.delivered, at("2026-11-27T10:02:00Z"));
+});
+
+test("unknown event types never crash the column derivation", () => {
+  const first = firstEventTimes(timed(["teleported", "2026-11-27T10:00:00Z"]));
+  for (const type of SEND_EVENT_TYPES) assert.equal(first[type], null);
+});
+
+test("the column labels carry Sean's vocabulary onto the schema's events", () => {
+  // "Received" is the UI word for the `delivered` event and "Signed" for
+  // `accepted` — renaming either column or remapping its event is a spec
+  // break (GH #21 AC 2), so the mapping is pinned exactly.
+  const byLabel = Object.fromEntries(RECIPIENT_COLUMNS.map((c) => [c.label, c.event]));
+  assert.deepEqual(byLabel, {
+    Sent: "sent",
+    Received: "delivered",
+    Opened: "opened",
+    Clicked: "clicked",
+    Viewed: "viewed",
+    Signed: "accepted",
+  });
+  // Opened and Clicked are distinct columns, in funnel order.
+  assert.deepEqual(
+    RECIPIENT_COLUMNS.map((c) => c.event),
+    ["sent", "delivered", "opened", "clicked", "viewed", "accepted"],
+  );
 });
 
 test("read seconds sum across viewed pings and ignore junk meta", () => {

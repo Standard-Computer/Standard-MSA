@@ -1,6 +1,13 @@
 import Link from "next/link";
 
-import { FUNNEL_STAGES, funnelFor, readSeconds, type Funnel } from "@/lib/sends/lifecycle";
+import {
+  FUNNEL_STAGES,
+  RECIPIENT_COLUMNS,
+  firstEventTimes,
+  funnelFor,
+  readSeconds,
+  type Funnel,
+} from "@/lib/sends/lifecycle";
 import { listNoticeCandidates } from "@/lib/sends/notices";
 import { allSends, type SendWithTrail } from "@/lib/sends/sends";
 import { requireOperator } from "@/lib/auth/page";
@@ -29,6 +36,11 @@ const STATUS_CLASS: Record<string, string> = {
   bounced: "text-red-700",
 };
 
+/** UTC timestamp to the minute, same shape as the Created column has always used. */
+function utc(date: Date): string {
+  return date.toISOString().replace("T", " ").slice(0, 16);
+}
+
 function groupByDocument(sends: SendWithTrail[]) {
   const groups = new Map<number, { title: string; slug: string; sends: SendWithTrail[] }>();
   for (const send of sends) {
@@ -51,7 +63,9 @@ export default async function SendsPage({
   const groups = groupByDocument(sends);
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-16">
+    // max-w-7xl, wider than the other operator screens: this table carries a
+    // timestamp column per lifecycle stage (SHA-4504).
+    <main className="mx-auto max-w-7xl px-6 py-16">
       <div className="flex items-baseline justify-between">
         <h1 className="text-3xl font-semibold">MSA sends</h1>
         <Link href="/sends/new" className="rounded bg-slate-900 px-4 py-2 text-sm text-white">
@@ -60,7 +74,8 @@ export default async function SendsPage({
       </div>
       <p className="mt-2 text-slate-600">
         {sends.length} send{sends.length === 1 ? "" : "s"} · every open, click, read and
-        acceptance is logged against its own unique link.
+        acceptance is logged against its own unique link. Each column shows the first time
+        that stage happened, in UTC.
       </p>
 
       {msg ? (
@@ -111,13 +126,18 @@ export default async function SendsPage({
                   <th className="p-2">Version</th>
                   <th className="p-2">Status</th>
                   <th className="p-2">Created (UTC)</th>
-                  <th className="p-2">Events</th>
-                  <th className="p-2">Read</th>
+                  {RECIPIENT_COLUMNS.map((column) => (
+                    <th key={column.event} className="p-2">
+                      {column.label}
+                    </th>
+                  ))}
+                  <th className="p-2">Outcome</th>
                   <th className="p-2">Evidence</th>
                 </tr>
               </thead>
               <tbody>
                 {group.sends.map((send) => {
+                  const first = firstEventTimes(send.events);
                   const seconds = readSeconds(send.events);
                   return (
                     <tr key={send.id} className="border-b border-slate-100">
@@ -133,11 +153,38 @@ export default async function SendsPage({
                       <td className={`p-2 font-medium ${STATUS_CLASS[send.status] ?? "text-slate-700"}`}>
                         {send.status}
                       </td>
+                      <td className="p-2 whitespace-nowrap">{utc(send.createdAt)}</td>
+                      {RECIPIENT_COLUMNS.map((column) => {
+                        const at = first[column.event];
+                        return (
+                          <td key={column.event} className="p-2 whitespace-nowrap">
+                            {at ? (
+                              <>
+                                {utc(at)}
+                                {column.event === "viewed" && seconds > 0 ? (
+                                  <span className="text-slate-500"> · {seconds}s</span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
                       <td className="p-2 whitespace-nowrap">
-                        {send.createdAt.toISOString().replace("T", " ").slice(0, 16)}
+                        {first.declined || first.bounced ? (
+                          <>
+                            {first.declined ? (
+                              <div className="text-amber-700">declined {utc(first.declined)}</div>
+                            ) : null}
+                            {first.bounced ? (
+                              <div className="text-red-700">bounced {utc(first.bounced)}</div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </td>
-                      <td className="p-2">{send.events.length}</td>
-                      <td className="p-2">{seconds > 0 ? `${seconds}s` : "—"}</td>
                       <td className="p-2">
                         {send.acceptance ? (
                           <Link href={`/sends/${send.id}/evidence`} className="text-blue-700">
