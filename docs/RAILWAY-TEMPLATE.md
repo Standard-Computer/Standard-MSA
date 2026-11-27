@@ -77,10 +77,12 @@ standalone output reads `process.env.PORT` in `server.js` and falls back to
 `3000` only when nothing is set. Railway always sets it, so on Railway the app
 is listening on the injected value — **`8080` on the live deploy** (`main`
 `990ffd40`, deployment `3609031f`). That deploy predates this lane, so its `/`
-answered a `307` to `/login` rather than the `303` to `/setup` in §5 step 3;
-what matters here is that it answered *at all*, which is the proof the routing
-was pointed at the right port. `3000` is what the fallback produces, and the
-fallback is the `docker compose` path, not this one.
+answered a `307` to `/login` rather than a `307` to `/setup` as in §5 step 3 —
+the *target* differed, because that build had no first-boot gate; the status
+code is `307` either way. What matters here is that it answered *at all*,
+which is the proof the routing was pointed at the right port. `3000` is what
+the fallback produces, and the fallback is the `docker compose` path, not this
+one.
 
 **`EXPOSE 3000` in the `Dockerfile` is not the answer either.** `EXPOSE` binds
 nothing and configures nothing — it is image metadata, there to match what
@@ -201,10 +203,15 @@ Run against a **fresh** deploy of the published template:
    `No pending migrations to apply`) and then Next.js `✓ Ready`. No
    `DATABASE_URL is not set`, no `NOTE this path is not a mounted volume`.
 2. **Health.** `curl -i https://<domain>/api/health` → `200`, `{"ok":true}`.
-3. **Front end.** `GET https://<domain>/` → `303` to `/setup` (`guard.ts:82`);
-   `/setup` serves the form. (Before this lane, `/` served nothing: the service
-   had no domain.) A `502` here is the target-port mistake in §2.1, not a build
-   failure — the app is up and the edge is routing to the wrong port.
+3. **Front end.** `GET https://<domain>/` → `307` to `/setup`; `/setup` serves
+   the form. (Before this lane, `/` served nothing: the service had no domain.)
+   A `502` here is the target-port mistake in §2.1, not a build failure — the
+   app is up and the edge is routing to the wrong port.
+
+   The code is `307`, not `303`: this redirect comes from Next's `redirect()`
+   on a GET, which preserves the method. Do not read a `307` as a stale or
+   pre-lane deploy — it is what a correct fresh deploy answers. (`303` appears
+   only after a form POST, in steps 4 and 6.)
 4. **Setup.** Submit a 12+ character password → redirected to `/onboarding`,
    signed in.
 5. **Setup closes.** Reopen `/setup` → redirected to `/login`.
