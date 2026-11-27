@@ -127,22 +127,32 @@ test("clicked is visible per recipient even though the status stays opened", () 
 });
 
 test("the FIRST occurrence wins, even when a late projection lands out of order", () => {
+  // Array order deliberately disagrees with timestamp order for BOTH types:
+  // the earliest occurrence sits later in the trail array, as a provider
+  // webhook projected after the fact leaves it. Taking first-in-array-order
+  // instead of the minimum fails here.
   const first = firstEventTimes(
     timed(
-      ["opened", "2026-11-27T10:05:00Z"],
       ["opened", "2026-11-27T11:00:00Z"],
-      // A provider webhook projected after the opens, carrying an earlier time.
-      ["delivered", "2026-11-27T10:02:00Z"],
+      ["opened", "2026-11-27T10:05:00Z"],
       ["delivered", "2026-11-27T10:30:00Z"],
+      ["delivered", "2026-11-27T10:02:00Z"],
     ),
   );
   assert.deepEqual(first.opened, at("2026-11-27T10:05:00Z"));
   assert.deepEqual(first.delivered, at("2026-11-27T10:02:00Z"));
 });
 
-test("unknown event types never crash the column derivation", () => {
-  const first = firstEventTimes(timed(["teleported", "2026-11-27T10:00:00Z"]));
-  for (const type of SEND_EVENT_TYPES) assert.equal(first[type], null);
+test("unknown event types are skipped entirely, never crash, never become keys", () => {
+  const first = firstEventTimes(
+    timed(["teleported", "2026-11-27T10:00:00Z"], ["sent", "2026-11-27T10:01:00Z"]),
+  );
+  assert.deepEqual(first.sent, at("2026-11-27T10:01:00Z"));
+  for (const type of SEND_EVENT_TYPES) {
+    if (type !== "sent") assert.equal(first[type], null);
+  }
+  // The guard, held: a foreign type must not be accumulated under its own key.
+  assert.equal("teleported" in first, false, "foreign event type leaked into the result");
 });
 
 test("the column labels carry Sean's vocabulary onto the schema's events", () => {
