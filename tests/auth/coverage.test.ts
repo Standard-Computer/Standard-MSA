@@ -89,48 +89,46 @@ function actionFiles(): RouteFile[] {
 }
 
 /**
- * The same source with comments blanked out.
+ * How the rules below decide a source really CALLS a guard.
  *
- * Every rule below matches a CALL with a regex, and a regex cannot tell a call
- * from prose about a call. Found the hard way (SHA-4458): the first revision
- * of the public-action rule at the bottom of this file passed with the gate
- * check deleted from src/app/setup/actions.ts, because the comment above that
- * line names `requireUnclaimed()` — parentheses included — and the regex
- * matched the comment. A guardrail a comment can satisfy is not a guardrail.
+ * They ask the parser for `CallExpression` nodes. They used to match a regex
+ * against text, and five rounds of review established that no amount of
+ * pre-processing makes a regex able to tell a call from prose about a call:
  *
- * GUARD_CALL has always had the same exposure, so it runs on stripped source
- * too: before this, a file that merely *mentioned* `requireOperator()` in a
- * comment satisfied the operator rules.
- *
- * This asks the TypeScript parser where the comments are instead of scanning
- * for them by hand. The scanner that used to live here took four rounds to not
- * quite work, each one adding a shape to an exclusion list:
- *
- *   1. `/["]/` — an unpaired quote in a character class — flipped it into
- *      string mode, and every comment after it in the file leaked through as
- *      code (SHA-4469). That line is real: src/lib/legal/html.ts:15.
- *   2. Teaching it regex literals made `</div>` and `<Foo />` open regex mode,
+ *   1. SHA-4458. The first public-action rule passed with the gate check
+ *      deleted from src/app/setup/actions.ts, because the comment above that
+ *      line names `requireUnclaimed()` — parentheses included — and the regex
+ *      matched the comment. A guardrail a comment can satisfy is not one.
+ *   2. So the rules ran on source with comments blanked out, by a scanner
+ *      written here. `/["]/` — an unpaired quote in a character class, real at
+ *      src/lib/legal/html.ts:15 — flipped it into string mode, and every
+ *      comment after it in the file leaked through as code (SHA-4469).
+ *   3. Teaching it regex literals made `</div>` and `<Foo />` open regex mode,
  *      where `//` is not a comment opener, so a trailing comment on a JSX line
  *      leaked instead.
- *   3. Excluding those two JSX shapes made a regex that *starts* with `>` —
+ *   4. Excluding those two JSX shapes made a regex that *starts* with `>` —
  *      `/>/g`, the idiomatic sibling of that html.ts line — refuse its own
  *      opener and leak (SHA-4472).
- *   4. The prototype for 3 still leaked on `if (a < b) v.replace(/>/g, "x");`,
- *      because a `<` anywhere earlier on the line looks like an open tag.
+ *   5. Asking the parser for the comment ranges closed that whole class, and
+ *      the carrier simply moved: the stripper deliberately keeps strings,
+ *      template literals and JSX children, so `<p>requireOperator()</p>`,
+ *      `"requireOperator()"` and `` `requireUnclaimed()` `` each satisfied a
+ *      mechanism rule with the real call deleted (SHA-4484).
  *
- * The cause was the same every round: whether a `/` opens a regex or divides
- * depends on a parse the scanner was not doing. The parser does that parse, so
- * the class is gone rather than enumerated, and `typescript` is already a
- * devDependency so this costs no new install. The invariant that replaces the
- * old terminal-mode sweep is below: stripping must not change a single token
- * the parser can see.
+ * Round 5 is the one that does not generalise to a sixth: a `CallExpression`
+ * is what the parser emits for a call and nothing else. Prose cannot produce
+ * one, in a comment or anywhere else; neither can the text of a string, a
+ * template literal or a JSX child. There is no carrier left to move to, so
+ * this is a closed class rather than an exclusion list — which is why the
+ * stripper, and the token-equivalence sweep that existed to police it, are
+ * both gone. (The sweep could not have caught round 5 either: a comment that
+ * survives stripping is still a comment in the stripped text, comments emit no
+ * tokens, so the two streams match. It only ever closed the eats-code
+ * direction. Measured on this tree: a stripper that drops every `/**` range
+ * passes it on all 136 files.)
  *
- * Comments are blanked to spaces rather than removed, so offsets and line
- * numbers still line up for any future failure message, and two identifiers
- * separated by a block comment cannot merge into one token.
- *
- * Strings, template literals and regex literals keep their contents, since a
- * call is a call. So do JSX children, where a `//` is ordinary text.
+ * `typescript` is already a devDependency, so this costs no new install, and
+ * nothing in `src/` changes.
  */
 function parseSource(source: string): ts.SourceFile {
   // Parsed as .tsx throughout: it is what most of this repo is, the parser is
@@ -145,184 +143,128 @@ function isJsDoc(node: ts.Node): boolean {
 }
 
 /**
- * Every comment range in `source`, and nothing else.
+ * The name being called, for the callee forms a guard can be invoked through.
  *
- * A comment is leading trivia of the token after it, or trailing trivia of the
- * token before it when it sits on that token's line, so both are collected at
- * every token. Inside JSX children a `//` is text rather than a comment, so
- * ranges landing in a JsxText span are dropped.
+ * `requireOperator()` is an Identifier; `auth.requireOperator()` through a
+ * namespace import is a PropertyAccessExpression, and the parentheses and `!`
+ * forms are unwrapped because they change nothing about which function runs.
+ * Anything else — a call through a variable, an element access, a call whose
+ * callee is itself a call — is deliberately not a match: the rules below want
+ * the guard named at the call site, which is also all the old regex could see.
  */
-function commentRanges(source: string): readonly ts.CommentRange[] {
-  const sf = parseSource(source);
-  const found = new Map<number, ts.CommentRange>();
-  const jsxText: Array<readonly [number, number]> = [];
-  const visit = (node: ts.Node): void => {
-    if (node.kind === ts.SyntaxKind.JsxText) jsxText.push([node.getStart(sf), node.getEnd()]);
-    for (const range of ts.getLeadingCommentRanges(source, node.getFullStart()) ?? []) {
-      found.set(range.pos, range);
-    }
-    for (const range of ts.getTrailingCommentRanges(source, node.getEnd()) ?? []) {
-      found.set(range.pos, range);
-    }
-    for (const child of node.getChildren(sf)) visit(child);
-  };
-  visit(sf);
-  return [...found.values()].filter(
-    (range) => !jsxText.some(([start, end]) => range.pos >= start && range.pos < end),
-  );
-}
-
-function stripComments(source: string): string {
-  let out = source;
-  for (const range of commentRanges(source)) {
-    const blanked = source.slice(range.pos, range.end).replace(/[^\n]/gu, " ");
-    out = out.slice(0, range.pos) + blanked + out.slice(range.end);
-  }
-  return out;
+function calleeName(expr: ts.Expression): string | undefined {
+  if (ts.isIdentifier(expr)) return expr.text;
+  if (ts.isPropertyAccessExpression(expr)) return expr.name.text;
+  if (ts.isParenthesizedExpression(expr)) return calleeName(expr.expression);
+  if (ts.isNonNullExpression(expr)) return calleeName(expr.expression);
+  return undefined;
 }
 
 /**
- * Every token the parser can see — which is all the rules below are entitled
- * to read.
+ * Does this source really CALL one of `names`, as opposed to talking about it?
  *
- * JSDoc nodes are skipped whole: the parser materialises them as children of
- * the declaration they document, and they are exactly what stripping removes.
+ * A `CallExpression` is the only node the parser emits for a call, so prose
+ * cannot satisfy this however it is carried — see the note above `parseSource`
+ * for the five rounds that establishes. JSDoc subtrees are skipped outright
+ * rather than relied on to contain no call node.
+ *
+ * `false` is the fail-closed answer: every rule below reports a miss when this
+ * returns false, so a fragment that will not parse fails loudly instead of
+ * passing vacuously.
  */
-function significantTokens(source: string): readonly string[] {
+function calls(names: readonly string[], source: string): boolean {
   const sf = parseSource(source);
-  const out: string[] = [];
+  let found = false;
   const visit = (node: ts.Node): void => {
-    if (isJsDoc(node)) return;
-    const children = node.getChildren(sf);
-    if (children.length === 0 && node.getEnd() > node.getStart(sf)) {
-      out.push(`${node.kind}:${node.getText(sf)}`);
+    if (found || isJsDoc(node)) return;
+    if (ts.isCallExpression(node)) {
+      const name = calleeName(node.expression);
+      if (name !== undefined && names.includes(name)) {
+        found = true;
+        return;
+      }
     }
-    for (const child of children) visit(child);
+    ts.forEachChild(node, visit);
   };
-  visit(sf);
-  return out;
+  ts.forEachChild(sf, visit);
+  return found;
 }
 
-test("stripComments removes prose about a call but keeps the call", () => {
-  // The stripper is load-bearing for every rule below, so it gets its own
-  // assertions rather than being trusted.
-  assert.equal(stripComments("// requireOperator()\n").includes("requireOperator"), false);
-  assert.equal(stripComments("/* requireOperator() */").includes("requireOperator"), false);
-  assert.equal(stripComments("await requireOperator();").includes("requireOperator"), true);
-  // A `//` inside a string is not a comment opener.
-  assert.equal(
-    stripComments('const u = "https://x/y"; await requireOperator();').includes("requireOperator"),
-    true,
-  );
-  // Nor is one inside a template literal, and the literal's own text survives.
-  assert.equal(stripComments("`a // b`").includes("a // b"), true);
-  // An escaped quote does not end the string early.
-  assert.equal(stripComments('const s = "he said \\"// hi\\""; guardOperatorRequest(r);')
-    .includes("guardOperatorRequest"), true);
-  // Block comments keep their newlines, so line counts are unchanged.
-  assert.equal(stripComments("/*\n\n*/x").split("\n").length, 3);
-});
+const GUARD_CALLS = ["requireOperator", "guardOperatorRequest"] as const;
 
-test("stripComments knows a regex literal from a comment and from division", () => {
-  // SHA-4469. An unpaired quote inside a character class used to flip the
-  // stripper into string mode for the rest of the file, so prose after it
-  // satisfied the mechanism rules. The exact shape, and the real line that
-  // carries it (src/lib/legal/html.ts:15):
-  assert.equal(
-    stripComments('const re = /["]/g;\n// requireOperator()\n').includes("requireOperator"),
-    false,
-  );
-  assert.equal(
-    stripComments('value.replace(/[&<>"\']/g, f);\n/* requireOperator() */\n')
-      .includes("requireOperator"),
-    false,
-  );
-  // A `/` inside a character class is not the terminator.
-  assert.equal(
-    stripComments("const re = /[/]/;\n// requireOperator()\n").includes("requireOperator"),
-    false,
-  );
-  // An escaped slash is not the terminator either.
-  assert.equal(
-    stripComments("const re = /a\\/b/;\n// requireOperator()\n").includes("requireOperator"),
-    false,
-  );
-  // Division must NOT be read as a regex opener, or the code after it is eaten.
-  assert.equal(stripComments("const n = a / b; await requireOperator();")
-    .includes("requireOperator"), true);
-  assert.equal(stripComments("const n = (a + b) / 2; await requireOperator();")
-    .includes("requireOperator"), true);
-  assert.equal(stripComments("const n = xs[0] / 2; await requireOperator();")
-    .includes("requireOperator"), true);
-  // A regex after a keyword is still a regex.
-  assert.equal(stripComments('return /["]/.test(s);\n// requireOperator()\n')
-    .includes("requireOperator"), false);
-  // The call survives when it follows a regex literal — the point of the mode
-  // is to resume code, not to swallow what comes next.
-  assert.equal(stripComments('if (/["]/.test(s)) await requireOperator();')
-    .includes("requireOperator"), true);
-  // A comment opener inside a regex is not a comment.
-  assert.equal(stripComments("const re = /\\/\\//; await requireOperator();")
-    .includes("requireOperator"), true);
-});
-
-test("a trailing comment is stripped whatever the line puts in front of it", () => {
-  // Every entry here leaked through as code at some point in this guardrail's
-  // history, and a leak is what lets prose satisfy a mechanism rule. They are
-  // kept as a table because the lesson of SHA-4469 and SHA-4472 is that the
-  // next shape is not the last one — adding it should be one line.
-  const leaks: ReadonlyArray<readonly [string, string]> = [
-    ["JSX closing tag", "<p>hi</p> // requireUnclaimed()\nconst a = 1;\n"],
-    ["JSX self-closing tag", "<Foo a={x} /> // requireUnclaimed()\nconst a = 1;\n"],
-    ["JSX closer, block comment", "<p>hi</p> /* requireUnclaimed() */\nconst a = 1;\n"],
-    ["JSX closer after a call", "<p>{f()}</p> // requireUnclaimed()\n"],
-    ["JSX expression container", "<p>{/* requireUnclaimed() */}</p>\n"],
-    // SHA-4472: a regex whose first character is `>` has the `<Foo />` shape.
-    ["regex starting with >", 'v.replace(/>/g, "&gt;"); // requireUnclaimed()\n'],
-    ["regex starting with >=", 'if (/>=/.test(s)) f(s); // requireUnclaimed()\n'],
-    // ...and a `<` earlier on the line does not make the one after it a tag.
-    ["< compare, then that regex", 'if (a < b) v.replace(/>/g, "x"); // requireUnclaimed()\n'],
-    ["generic call, then that regex", 'f<string>(x); v.replace(/>/g, "y"); // requireUnclaimed()\n'],
-    // A property named with a keyword is not a keyword, so this is division.
-    ["keyword-named property", "const r = row.in / 2; // requireUnclaimed()\n"],
-    ["another one", "const r = counts.delete / 2; // requireUnclaimed()\n"],
-    ["quote in a character class", 'const re = /["]/g;\n// requireUnclaimed()\n'],
+test("calls() sees a call and nothing that merely names one", () => {
+  // The predicate is load-bearing for every rule below, so it gets its own
+  // assertions rather than being trusted. The four carriers are the four that
+  // have actually satisfied a rule in this guardrail's history: a comment
+  // (SHA-4458), then JSX children, a string and a template literal (SHA-4484),
+  // once comments stopped being the easy one.
+  const prose: ReadonlyArray<readonly [string, string]> = [
+    ["line comment", "// requireOperator()\n"],
+    ["block comment", "/* requireOperator() */\n"],
+    ["JSDoc", "/** requireOperator() */\nexport const x = 1;\n"],
+    ["JSX child text", "export const C = () => <p>requireOperator()</p>;\n"],
+    ["JSX child, multi-line", "export const C = () => (\n  <p>\n    requireOperator()\n  </p>\n);\n"],
+    ["string literal", 'const s = "requireOperator()";\n'],
+    ["template literal text", "const s = `requireOperator()`;\n"],
+    ["JSX attribute string", 'export const C = () => <p title="requireOperator()" />;\n'],
+    // The shapes the old scanner got wrong are still worth a line each, since
+    // they are the inputs most likely to break a parse-based reading too.
+    ["trailing comment after JSX", "<p>hi</p> // requireOperator()\nconst a = 1;\n"],
+    ["trailing comment after a >-regex", 'v.replace(/>/g, "x"); // requireOperator()\n'],
+    ["quote in a character class", 'const re = /["]/g;\n// requireOperator()\n'],
+    ["comment inside a JSX container", "export const C = () => <p>{/* requireOperator() */}</p>;\n"],
+    // A declaration is not a call. The five files that declare these functions
+    // are never queried by a rule below, so this costs nothing and keeps the
+    // predicate honest about what it answers.
+    ["its own declaration", "export async function requireOperator(): Promise<void> {}\n"],
   ];
-  for (const [label, source] of leaks) {
-    assert.equal(stripComments(source).includes("requireUnclaimed"), false, label);
+  for (const [label, source] of prose) {
+    assert.equal(calls(GUARD_CALLS, source), false, label);
   }
-  // The paired controls: none of the above may cost a real call. A stripper
-  // that eats code fails these, and a rule that stops seeing its call is just
-  // as broken as one a comment can satisfy.
-  const keeps: ReadonlyArray<readonly [string, string]> = [
-    ["after a JSX self-closing tag", "<Foo a={x} /> // prose\nawait requireOperator();\n"],
-    ["after a JSX closing tag", "<p>hi</p> // prose\nawait requireOperator();\n"],
-    ["inside a JSX prop", "<Foo onX={() => requireOperator()} />\n"],
+  // The paired controls: none of the above may cost a real call. A predicate
+  // that stops seeing its call is as broken as one prose can satisfy.
+  const real: ReadonlyArray<readonly [string, string]> = [
+    ["awaited call", "await requireOperator();\n"],
+    ["the other name", "guardOperatorRequest(request);\n"],
+    ["after a trailing comment", "<p>hi</p> // prose\nawait requireOperator();\n"],
+    ["inside a JSX prop", "export const C = () => <Foo onX={() => requireOperator()} />;\n"],
+    ["in a template substitution", "const s = `${await requireOperator()}`;\n"],
+    ["through a namespace import", "await auth.requireOperator();\n"],
+    // In a function body, so `await` is the operator rather than — as it is at
+    // the top level of a script — an identifier being called with the guard as
+    // its argument, which is a different program and correctly not a match.
+    ["parenthesised callee", "async function f() { await (requireOperator)(); }\n"],
+    ["next to prose naming it", "// requireOperator()\nawait requireOperator();\n"],
+    ["beside a string naming it", 'const s = "requireOperator()"; await requireOperator();\n'],
     ["after a >-leading regex", 'v.replace(/>/g, "x"); await requireOperator();\n'],
     ["after a keyword-named property", "const n = row.in / 2; await requireOperator();\n"],
   ];
-  for (const [label, source] of keeps) {
-    assert.equal(stripComments(source).includes("requireOperator"), true, label);
+  for (const [label, source] of real) {
+    assert.equal(calls(GUARD_CALLS, source), true, label);
   }
 });
 
-test("stripping a real source file changes no token the parser can see", () => {
-  // The class-level assertion, and the one the old hand-rolled scanner could
-  // not carry (SHA-4469, SHA-4472).
+test("no prose carrier changes the verdict on any real source file", () => {
+  // The class-level assertion, run over the whole of src/ rather than over the
+  // inputs somebody thought to try — which is how every leak in this
+  // guardrail's history got in. It is deliberately in the LEAK direction, the
+  // one the old token-equivalence sweep could not see at all: adding prose
+  // that names a guard, in each carrier that has ever satisfied a rule here,
+  // must not turn a file's verdict from false to true.
   //
-  // Every rule in this file matches against stripped source, so two things can
-  // go wrong: a comment survives and satisfies a rule as though it were code,
-  // or real code is eaten and a rule silently stops seeing the call it checks.
-  // Both change the token stream. Comparing each file's tokens against the
-  // tokens of its stripped self therefore catches either one, for any shape,
-  // rather than for the inputs somebody thought to try — which is how all four
-  // leaks in this guardrail's history got in.
-  //
-  // Checked over the whole of src/, not just the src/app files the rules walk
-  // today: the files that broke the old scanner (src/lib/legal/html.ts,
-  // src/lib/auth/) sit outside src/app, and a rule here only has to widen its
-  // scope once for that to matter.
-  const offenders: string[] = [];
+  // Checked beyond the src/app files the rules walk today: the files that broke
+  // the old scanner (src/lib/legal/html.ts, src/lib/auth/) sit outside src/app,
+  // and a rule here only has to widen its scope once for that to matter.
+  const CARRIERS: ReadonlyArray<readonly [string, string]> = [
+    ["line comment", "// requireOperator()\n"],
+    ["block comment", "/* guardOperatorRequest() */\n"],
+    ["JSDoc", "/** requireOperator() */\nexport const __prose = 1;\n"],
+    ["string", 'export const __proseStr = "requireOperator()";\n'],
+    ["template literal", "export const __proseTpl = `guardOperatorRequest()`;\n"],
+    ["JSX child", "export const __ProseC = () => <p>requireOperator()</p>;\n"],
+  ];
+  const leaked: string[] = [];
+  const blind: string[] = [];
   let checked = 0;
   const visit = (dir: string): void => {
     for (const entry of listDir(dir)) {
@@ -332,32 +274,33 @@ test("stripping a real source file changes no token the parser can see", () => {
         continue;
       }
       if (!entry.endsWith(".ts") && !entry.endsWith(".tsx")) continue;
-      const source = readSource(full);
+      const source = `${readSource(full)}\n`;
+      const file = path.relative(process.cwd(), full);
       checked += 1;
-      const before = significantTokens(source).join("\n");
-      const after = significantTokens(stripComments(source)).join("\n");
-      if (before !== after) offenders.push(path.relative(process.cwd(), full));
+      const before = calls(GUARD_CALLS, source);
+      for (const [label, prose] of CARRIERS) {
+        if (calls(GUARD_CALLS, source + prose) !== before) leaked.push(`${file} (${label})`);
+      }
+      // Paired control: a real appended call must flip every file that did not
+      // already call a guard, or this sweep is passing because the predicate
+      // answers false to everything.
+      if (!calls(GUARD_CALLS, `${source}function __real(): void { requireOperator(); }\n`)) {
+        blind.push(file);
+      }
     }
   };
   visit(path.join(process.cwd(), "src"));
   assert.deepEqual(
-    offenders,
+    leaked,
     [],
-    "tests/auth/coverage.test.ts stripComments() changed the code of each of " +
-      "these files, so every rule here that reads them is unreliable — it " +
-      "either leaked a comment as code or ate code as a comment",
+    "adding prose that merely names a guard changed calls()' verdict on each " +
+      "of these, so prose can satisfy the mechanism rules below",
   );
-  // Non-vacuity: an empty walk would pass the assertion above while proving
+  assert.deepEqual(blind, [], "calls() did not see a real appended call in each of these");
+  // Non-vacuity: an empty walk would pass both assertions while proving
   // nothing, which is the trap `the app has routes to check` exists to close.
   assert.ok(checked > 100, `expected the real tree, checked ${checked} files`);
 });
-
-const GUARD_CALL = /\b(requireOperator|guardOperatorRequest)\s*\(/;
-
-/** Does this source really CALL `pattern`, as opposed to talking about it? */
-function calls(pattern: RegExp, source: string): boolean {
-  return pattern.test(stripComments(source));
-}
 
 test("the app has routes to check — the walk is not silently empty", () => {
   const routes = routeFiles();
@@ -384,7 +327,7 @@ test("every route in src/app is classified in surfaces.ts", () => {
 test("every operator page and route handler calls the guard", () => {
   const unguarded = routeFiles()
     .filter((r) => classifyPath(r.route).kind === "operator")
-    .filter((r) => !calls(GUARD_CALL, r.source));
+    .filter((r) => !calls(GUARD_CALLS, r.source));
   assert.deepEqual(
     unguarded.map((r) => `${r.route} (${r.file})`),
     [],
@@ -398,7 +341,7 @@ test("every server action under an operator route calls the guard", () => {
   // and not the action leaves the write reachable.
   const unguarded = actionFiles()
     .filter((f) => classifyPath(f.route).kind === "operator")
-    .filter((f) => !calls(GUARD_CALL, f.source));
+    .filter((f) => !calls(GUARD_CALLS, f.source));
   assert.deepEqual(
     unguarded.map((f) => `${f.route} (${f.file})`),
     [],
@@ -440,7 +383,7 @@ test("each server action in a guarded file guards itself", () => {
       misses.push(`<no server action recognised> (${file.file})`);
     }
     for (const action of actions) {
-      if (!calls(GUARD_CALL, action.body)) misses.push(`${action.name} (${file.file})`);
+      if (!calls(GUARD_CALLS, action.body)) misses.push(`${action.name} (${file.file})`);
     }
   }
   assert.deepEqual(
@@ -499,8 +442,8 @@ test("the per-action split resolves an action in every operator action file", ()
 interface PublicActionGuard {
   /** Repo-relative, POSIX separators. */
   readonly file: string;
-  /** The call that authorises an action in this file. */
-  readonly mechanism: RegExp;
+  /** The name of the call that authorises an action in this file. */
+  readonly mechanism: string;
   readonly because: string;
   /** Actions that legitimately need no mechanism, each with its reason. */
   readonly exempt?: Readonly<Record<string, string>>;
@@ -509,7 +452,7 @@ interface PublicActionGuard {
 const PUBLIC_ACTION_GUARDS: readonly PublicActionGuard[] = [
   {
     file: "src/app/setup/actions.ts",
-    mechanism: /\brequireUnclaimed\s*\(/,
+    mechanism: "requireUnclaimed",
     because:
       "First boot. The authorisation is that this instance has no operator yet " +
       "(src/lib/auth/gate.ts); claimOperatorPassword() re-asks the same " +
@@ -519,7 +462,7 @@ const PUBLIC_ACTION_GUARDS: readonly PublicActionGuard[] = [
   },
   {
     file: "src/app/login/actions.ts",
-    mechanism: /\bverifyOperatorPassword\s*\(/,
+    mechanism: "verifyOperatorPassword",
     because: "The password IS the authorisation; the throttle limits guessing.",
     exempt: {
       logoutAction:
@@ -530,7 +473,7 @@ const PUBLIC_ACTION_GUARDS: readonly PublicActionGuard[] = [
   },
   {
     file: "src/app/msa/[token]/actions.ts",
-    mechanism: /\bisSendTokenShape\s*\(/,
+    mechanism: "isSendTokenShape",
     because:
       "The recipient's 256-bit send token is the authorisation " +
       "(src/lib/sends/tokens.ts). The shape check is the gate these actions " +
@@ -584,9 +527,9 @@ test("every action in a public action file applies that file's mechanism", () =>
         "would be checked vacuously — widen tests/auth/_actionSplit.ts",
     );
     for (const action of actions) {
-      if (calls(guard.mechanism, action.body)) continue;
+      if (calls([guard.mechanism], action.body)) continue;
       if (guard.exempt !== undefined && action.name in guard.exempt) continue;
-      misses.push(`${action.name} (${guard.file}) needs ${String(guard.mechanism)}`);
+      misses.push(`${action.name} (${guard.file}) needs ${guard.mechanism}()`);
     }
   }
   assert.deepEqual(
@@ -605,8 +548,8 @@ test("no public action file is exempted wholesale", () => {
     const file = actionFiles().find((f) => posix(f.file) === guard.file);
     if (file === undefined) continue;
     assert.ok(
-      calls(guard.mechanism, file.source),
-      `${guard.file} declares ${String(guard.mechanism)} but never calls it`,
+      calls([guard.mechanism], file.source),
+      `${guard.file} declares ${guard.mechanism}() but never calls it`,
     );
   }
 });
