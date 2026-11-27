@@ -120,9 +120,19 @@ test("a hashed visit row carries neither the salt nor the address", () => {
   assert.match(cols.ipHash ?? "", /^[0-9a-f]{64}$/);
 });
 
-test("exactly one place in src/ reads the salt", () => {
+test("only the two visit writers can reach the salt, and only visits.ts reads it", () => {
   // Every extra reader is an extra chance for one to be interpolated into
   // output, and an extra copy of the fallback to drift.
+  //
+  // The sweep matches the SYMBOL as well as the env-var name. Grepping the
+  // literal `VISIT_IP_HASH_SALT` alone measures the wrong thing: visitIpSalt()
+  // is a second, grep-invisible route to the same value, so a new file could
+  // resolve the salt — `<div data-salt={visitIpSalt()} />` on the public
+  // /legal index being the cheapest example — and this assertion would still
+  // have seen exactly one hit. Whole-of-src/ exact match is what makes the
+  // claim "it cannot reach a public surface" rather than "it does not reach
+  // these six surfaces today": any fourth file, public or operator-gated,
+  // fails here by appearing in the list.
   const hits: string[] = [];
   const walk = (dir: string) => {
     // eslint-disable-next-line security/detect-non-literal-fs-filename
@@ -135,14 +145,20 @@ test("exactly one place in src/ reads the salt", () => {
       }
       if (!/\.(ts|tsx|js|mjs|css)$/.test(entry)) continue;
       // eslint-disable-next-line security/detect-non-literal-fs-filename
-      if (readFileSync(p, "utf8").includes("VISIT_IP_HASH_SALT")) hits.push(p);
+      if (/VISIT_IP_HASH_SALT|visitIpSalt/.test(readFileSync(p, "utf8"))) hits.push(p);
     }
   };
   walk(join(process.cwd(), "src"));
+  // readdirSync is not sorted, so both sides are — otherwise a multi-hit
+  // expectation passes or fails on directory order.
   assert.deepEqual(
-    hits.map((p) => p.slice(process.cwd().length + 1)),
-    ["src/lib/visits/visits.ts"],
-    "visitIpSalt() is the only reader of the salt; route and page code asks it",
+    hits.map((p) => p.slice(process.cwd().length + 1)).sort(),
+    [
+      "src/app/api/legal/visit/route.ts",
+      "src/lib/visits/record.ts",
+      "src/lib/visits/visits.ts",
+    ].sort(),
+    "visits.ts reads the salt; only the two visit-row writers may even resolve it",
   );
 });
 

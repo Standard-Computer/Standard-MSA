@@ -16,11 +16,14 @@
 //           timestamp, and the rows come back through the exact query
 //           /visits renders from.
 //
-// The direct-page-view writer (src/lib/visits/record.ts) cannot be driven
-// here: it reads next/headers, which throws outside a request scope and is
-// swallowed by its own catch. Its decision is covered instead by the pure
-// branch tests in ./visits.test.ts plus the source pin at the bottom of this
-// file, which is what holds the two writers to ONE copy of Sean's ruling.
+// The direct-page-view writer (src/lib/visits/record.ts) CAN now be driven
+// here, which it could not when this file was first written: SHA-4501 (#28)
+// gave recordPageVisit an optional `requestHeaders`, for the PDF route
+// handlers, and supplying it is what keeps the function off next/headers —
+// which throws outside a request scope and is swallowed by its own catch. So
+// the second writer gets real behavioural coverage below rather than only
+// the source pin at the bottom of the file, and both of them are held to ONE
+// copy of Sean's ruling by both.
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -49,6 +52,7 @@ let visitRoute: typeof import("../../src/app/api/legal/visit/route");
 let settings: typeof import("../../src/lib/legal/settings");
 let visitsQuery: typeof import("../../src/lib/visits/query");
 let visitHelpers: typeof import("../../src/lib/visits/visits");
+let record: typeof import("../../src/lib/visits/record");
 let embed: typeof import("../../src/lib/legal/embed");
 
 let msaDocId = 0;
@@ -98,6 +102,7 @@ before(async () => {
   settings = await import("../../src/lib/legal/settings");
   visitsQuery = await import("../../src/lib/visits/query");
   visitHelpers = await import("../../src/lib/visits/visits");
+  record = await import("../../src/lib/visits/record");
   embed = await import("../../src/lib/legal/embed");
 
   await prisma.mspIdentity.create({
@@ -278,6 +283,57 @@ test("a date filter narrows the log without dropping the IP columns", async () =
   assert.equal(none.length, 0);
 });
 
+test("the direct page view obeys the same toggle, and never stores both", async () => {
+  // The OTHER writer, driven for real. A source pin can only say what
+  // record.ts looks like; this says what it does. Whatever the file is
+  // rewritten to, a row that carries the address and the hash together — the
+  // privacy-losing direction, and what the "exclusive by construction"
+  // docstring in src/lib/visits/visits.ts forbids — fails here.
+  const pageHeaders = () =>
+    new Headers({
+      "x-forwarded-for": `${VISITOR_IP}, 10.0.0.1`,
+      "user-agent": VISITOR_UA,
+      "cf-ipcountry": "us",
+      referer: HOST_PAGE,
+    });
+  /** The row this writer just wrote, found by its own path. */
+  const rowFor = async (path: string) => {
+    const row = await prisma.legalVisit.findFirst({ where: { path }, orderBy: { id: "desc" } });
+    assert.ok(row, `the page view created a visit row for ${path}`);
+    return row!;
+  };
+
+  // Default: the address itself, per Sean's ruling.
+  await record.recordPageVisit("/legal/msa/pin-off", "msa", 1, pageHeaders());
+  const off = await rowFor("/legal/msa/pin-off");
+  assert.equal(off.ip, VISITOR_IP);
+  assert.equal(off.ipHash, null, "hashing off means no hash beside the address");
+  assert.equal(off.embedded, false, "a page view is not an embed visit");
+  assert.equal(off.userAgent, VISITOR_UA);
+  assert.equal(off.referer, HOST_PAGE, "the page view reads referer from the request header");
+  assert.equal(off.country, "US");
+
+  // Toggle on: the hash, and ONLY the hash.
+  await settings.updateLegalSettings({ hashVisitorIps: true });
+  try {
+    await record.recordPageVisit("/legal/msa/pin-on", "msa", 1, pageHeaders());
+    const on = await rowFor("/legal/msa/pin-on");
+    assert.equal(on.ip, null, "hashing on means the raw address is not stored");
+    assert.equal(on.ipHash, visitHelpers.hashIp(VISITOR_IP, "sha4497-test-salt"));
+    // Exclusivity, stated as the invariant rather than as two branch values:
+    // whichever way the toggle is set, exactly one of the pair is populated.
+    for (const row of [off, on]) {
+      assert.equal(
+        Number(row.ip !== null) + Number(row.ipHash !== null),
+        1,
+        `${row.path} must carry the address XOR the hash, never both and never neither`,
+      );
+    }
+  } finally {
+    await settings.updateLegalSettings({ hashVisitorIps: false });
+  }
+});
+
 // ── One copy of the ruling ───────────────────────────────────────────────
 
 test("both visit writers delegate the IP decision to visitorColumns", () => {
@@ -287,6 +343,15 @@ test("both visit writers delegate the IP decision to visitorColumns", () => {
   // default Sean ruled on lives in src/lib/visits/visits.ts and nowhere
   // else. Delete the delegation and this fails before the default can drift
   // for half the visits.
+  //
+  // It pins the ARGUMENT LIST and the spread, not merely that the call is
+  // present, because "calls visitorColumns" is satisfied by a writer that
+  // then re-branches on the toggle itself and stores the raw address
+  // alongside the hash — the exact thing the "exclusive by construction"
+  // docstring at src/lib/visits/visits.ts forbids. A caller that passes a
+  // hard-coded `false`, that spreads something other than the call's own
+  // result, or that names `hashVisitorIps` a second time anywhere in the
+  // file, fails here.
   const writers = [
     "src/lib/visits/record.ts",
     "src/app/api/legal/visit/route.ts",
@@ -294,10 +359,15 @@ test("both visit writers delegate the IP decision to visitorColumns", () => {
   for (const rel of writers) {
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     const src = readFileSync(join(process.cwd(), rel), "utf8");
-    assert.ok(src.includes("visitorColumns("), `${rel} must derive its visitor columns from the shared helper`);
-    assert.ok(
-      !/hashVisitorIps\s*[?&]/.test(src),
-      `${rel} must not carry its own hashVisitorIps branch`,
+    assert.match(
+      src,
+      /\.\.\.visitorColumns\(\s*get,\s*settings\.hashVisitorIps,\s*visitIpSalt\(\),?\s*\)/,
+      `${rel} must spread visitorColumns(get, settings.hashVisitorIps, visitIpSalt()) straight into the write`,
+    );
+    assert.equal(
+      (src.match(/hashVisitorIps/g) ?? []).length,
+      1,
+      `${rel} may name hashVisitorIps exactly once — as that argument, and never as a branch of its own`,
     );
     assert.ok(
       !src.includes("VISIT_IP_HASH_SALT"),
