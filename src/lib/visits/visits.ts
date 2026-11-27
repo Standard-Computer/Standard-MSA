@@ -57,6 +57,79 @@ export function hashIp(ip: string, salt: string): string {
   return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
 }
 
+/**
+ * The salt behind `hashVisitorIps`. One read of the env var, in one place.
+ *
+ * The fallback is deliberate: a hash with a shipped-default salt is still a
+ * pseudonym rather than an address, and an install that enables the toggle
+ * without setting the var must not silently fall back to storing raw IPs.
+ * Operators who want the hash to be unguessable set the var; README §
+ * Visitor log says so.
+ *
+ * Never logged, never rendered, never put in the embed snippet — the salt is
+ * an input to a one-way function here and nowhere else. tests/legal/
+ * salt-exposure.test.ts holds every public surface to that.
+ */
+export function visitIpSalt(): string {
+  return process.env.VISIT_IP_HASH_SALT || "standard-msa";
+}
+
+/** The visitor-identity columns of a LegalVisit row: raw address XOR hash. */
+export type VisitIpColumns = { ip: string | null; ipHash: string | null };
+
+/**
+ * THE decision about what a visit row keeps of the visitor's address.
+ *
+ * Sean's ruling of 2026-11-27 (mail 4895, SHA-4497) is that the default
+ * stays "track IPs and timestamps" — `hashVisitorIps: false` in
+ * src/lib/legal/settings.ts DEFAULTS — with the operator toggle left in
+ * place. Two call sites write visit rows (the direct /legal page view in
+ * ./record.ts and the embed beacon in src/app/api/legal/visit/route.ts), and
+ * before this they each carried their own copy of the ternary. Two copies of
+ * a product ruling is one copy too many: a change to either would move the
+ * default for half the visits and nothing would fail.
+ *
+ * So the ternary lives here once, both sites call it, and
+ * tests/legal/visits.test.ts pins both branches. The columns are exclusive by
+ * construction — never both, so a row can't carry the address twice.
+ */
+export function visitIpColumns(
+  ip: string | null,
+  hashVisitorIps: boolean,
+  salt: string,
+): VisitIpColumns {
+  if (!hashVisitorIps) return { ip, ipHash: null };
+  return { ip: null, ipHash: ip ? hashIp(ip, salt) : null };
+}
+
+/** What both visit-row writers derive from the request headers alone. */
+export type VisitorColumns = VisitIpColumns & {
+  userAgent: string | null;
+  country: string | null;
+  region: string | null;
+};
+
+/**
+ * Headers → the columns every visit row shares, however it was triggered.
+ *
+ * `referer` is NOT here: the page view reads the request header, while the
+ * beacon is posted by our own frame and so carries the host page's URL in
+ * its body instead. Same column, genuinely different source.
+ */
+export function visitorColumns(
+  get: (name: string) => string | null,
+  hashVisitorIps: boolean,
+  salt: string,
+): VisitorColumns {
+  const geo = geoFromHeaders(get);
+  return {
+    userAgent: get("user-agent")?.slice(0, 400) ?? null,
+    ...visitIpColumns(clientIpFrom(get), hashVisitorIps, salt),
+    country: geo.country,
+    region: geo.region,
+  };
+}
+
 /** Clamp one read-timer ping to what a real interval can contain. */
 export function clampPingSeconds(raw: unknown): number {
   const n = typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : 0;

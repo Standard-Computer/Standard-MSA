@@ -5,10 +5,9 @@ import { legalSettings } from "@/lib/legal/settings";
 import {
   clampPingSeconds,
   clampTotalSeconds,
-  clientIpFrom,
-  geoFromHeaders,
-  hashIp,
   isValidVisitId,
+  visitIpSalt,
+  visitorColumns,
 } from "@/lib/visits/visits";
 
 // The visitor-log beacon (SHA-2957). First-party only: the embed frame is
@@ -50,9 +49,6 @@ export async function POST(req: NextRequest) {
 
   const get = (name: string) => req.headers.get(name);
   const settings = await legalSettings();
-  const ip = clientIpFrom(get);
-  const geo = geoFromHeaders(get);
-  const salt = process.env.VISIT_IP_HASH_SALT || "standard-msa";
 
   try {
     await prisma.legalVisit.create({
@@ -62,12 +58,12 @@ export async function POST(req: NextRequest) {
         embedded: body.embedded ?? true,
         theme: body.theme?.slice(0, 16) ?? null,
         docsJson: JSON.stringify((body.docs ?? []).slice(0, 20)),
+        // The host page's URL, posted by our own frame — not this request's
+        // Referer, which is the frame itself.
         referer: body.referrer?.slice(0, 1000) || null,
-        userAgent: req.headers.get("user-agent")?.slice(0, 400) ?? null,
-        ip: settings.hashVisitorIps ? null : ip,
-        ipHash: settings.hashVisitorIps && ip ? hashIp(ip, salt) : null,
-        country: geo.country,
-        region: geo.region,
+        // Raw IP or salted hash per the operator toggle, decided in one
+        // place for this route and the direct page view alike.
+        ...visitorColumns(get, settings.hashVisitorIps, visitIpSalt()),
       },
     });
   } catch {
