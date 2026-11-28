@@ -37,6 +37,7 @@ const INPUT = {
   address: "123 Main St, Cabot, AR 72023",
   ownerName: "Sean Kubin",
   email: "alerts@standardcomputer.com",
+  phone: "555-0100",
   website: "https://www.standardcomputer.com",
   venueState: "Lonoke County, AR",
   venueCountry: "USA",
@@ -66,7 +67,7 @@ test("complete: persists values, composes venue, clears the skip", async () => {
   assert.ok(row.onboardingCompletedAt);
   assert.equal(row.onboardingSkippedAt, null);
   // The skip created the row blank, so every field reports as a change.
-  assert.equal(changes.length, 8);
+  assert.equal(changes.length, 9);
 
   // Still exactly ONE row — the singleton survived skip-then-complete.
   assert.equal(await prisma.mspIdentity.count(), 1);

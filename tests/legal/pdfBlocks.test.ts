@@ -18,6 +18,7 @@ const MSP: MspValues = {
   mspAddress: "17 Prairie Road, Lincoln, Nebraska",
   mspOwnerName: "Sean Kubin",
   mspEmail: "legal@standardcomputer.test",
+  mspPhone: "555-0100",
   mspWebsite: "https://standardcomputer.test",
   venue: "Nebraska",
 };

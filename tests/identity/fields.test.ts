@@ -9,6 +9,7 @@ import {
   validateIdentityInput,
   venueValueProblems,
   EMPTY_IDENTITY_INPUT,
+  IDENTITY_FIELD_LABELS,
   type MspIdentityInput,
 } from "../../src/lib/identity/fields";
 
@@ -18,6 +19,7 @@ const VALID: MspIdentityInput = {
   address: "123 Main St, Cabot, AR 72023",
   ownerName: "Sean Kubin",
   email: "alerts@standardcomputer.com",
+  phone: "555-0100",
   website: "https://www.standardcomputer.com",
   venueState: "Lonoke County, AR",
   venueCountry: "USA",
@@ -83,4 +85,31 @@ test("normalize trims every field", () => {
   const n = normalizeIdentityInput({ ...VALID, name: "  Padded  ", email: " a@b.co " });
   assert.equal(n.name, "Padded");
   assert.equal(n.email, "a@b.co");
+});
+
+// ── {{msp_phone}} (SHA-4708 / GH #33 §4, AC5) ──────────────────────────────
+
+test("phone is OPTIONAL — a blank one never blocks a save", () => {
+  // Same posture as address: an install that skipped onboarding, and every
+  // row that predates SHA-4708, must stay saveable.
+  assert.deepEqual(validateIdentityInput({ ...VALID, phone: "" }), {});
+  assert.ok(!("phone" in validateIdentityInput(EMPTY_IDENTITY_INPUT)));
+});
+
+test("phone is a field the shared label map knows, so every surface shows it", () => {
+  // /settings/identity and the re-run diff both enumerate this map; a field
+  // missing from it is a field that silently does not appear.
+  assert.equal(IDENTITY_FIELD_LABELS.phone, "Phone");
+  assert.ok("phone" in EMPTY_IDENTITY_INPUT);
+  assert.equal(EMPTY_IDENTITY_INPUT.phone, "");
+});
+
+test("phone is trimmed at the boundary like every other field", () => {
+  assert.equal(normalizeIdentityInput({ ...VALID, phone: "  555-0100  " }).phone, "555-0100");
+});
+
+test("no format validation on phone: real numbers are not all one shape", () => {
+  for (const phone of ["+44 20 7946 0958", "(555) 010-0100 x2", "555.0100", "call the on-call line"]) {
+    assert.deepEqual(validateIdentityInput({ ...VALID, phone }), {}, `${phone} must be accepted`);
+  }
 });

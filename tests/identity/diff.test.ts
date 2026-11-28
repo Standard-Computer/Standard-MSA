@@ -10,6 +10,7 @@ const BASE = {
   address: "123 Main St",
   ownerName: "Sean Kubin",
   email: "alerts@standardcomputer.com",
+  phone: "555-0100",
   website: "https://www.standardcomputer.com",
   venueState: "Lonoke County, AR",
   venueCountry: "USA",
@@ -37,6 +38,6 @@ test("each changed field is reported with label, before and after", () => {
 
 test("first run: every filled field reads as blank -> value", () => {
   const changes = identityChanges(EMPTY_IDENTITY_INPUT, BASE);
-  assert.equal(changes.length, 8);
+  assert.equal(changes.length, 9);
   assert.ok(changes.every((c) => c.before === "" && c.after !== ""));
 });
