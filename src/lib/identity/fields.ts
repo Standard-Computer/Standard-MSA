@@ -17,6 +17,17 @@ export type MspIdentityInput = {
   ownerName: string;
   /** Notification address (liveness alerts etc. — C3 reads this). */
   email: string;
+  /**
+   * Public contact number, backing {{msp_phone}} (SHA-4708).
+   *
+   * OPTIONAL, like `address`: an install that skipped onboarding must keep
+   * working, and the public /legal intro drops its contact clause rather
+   * than printing a blank. No format validation — "+44 20 7946 0958",
+   * "(501) 224-0050 x2" and "call the on-call line" are all things an MSP
+   * legitimately puts here, and a regex that rejects one of them would be
+   * wrong more often than the typo it caught.
+   */
+  phone: string;
   /** Public website; also where the /legal embed will live. */
   website: string;
   /** Governing-law venue, part 1: state or province. */
@@ -31,6 +42,7 @@ export const EMPTY_IDENTITY_INPUT: MspIdentityInput = {
   address: "",
   ownerName: "",
   email: "",
+  phone: "",
   website: "",
   venueState: "",
   venueCountry: "",
@@ -44,6 +56,7 @@ export const IDENTITY_FIELD_LABELS: Record<keyof MspIdentityInput, string> = {
   address: "MSP address",
   ownerName: "Owner / CEO",
   email: "Notification email",
+  phone: "Phone",
   website: "Website",
   venueState: "Venue state/province",
   venueCountry: "Venue country",
@@ -110,9 +123,10 @@ export type IdentityFieldErrors = Partial<Record<keyof MspIdentityInput, string>
  * (C3's alerting is dead without it), website (Sean named it, and the
  * /legal embed needs somewhere to live), and both venue parts (a contract
  * with a blank jurisdiction clause is the thing this wizard exists to
- * prevent). Address and owner/CEO are prompted for but may be left blank —
- * the header preview renders their labeled blank, which is how the gap
- * stays visible (the variables.ts "show the hole" posture).
+ * prevent). Address, owner/CEO and phone (SHA-4708) are prompted for but
+ * may be left blank — the header preview renders their labeled blank, which
+ * is how the gap stays visible (the variables.ts "show the hole" posture),
+ * and the public intro elides its contact clause entirely.
  */
 export function validateIdentityInput(input: MspIdentityInput): IdentityFieldErrors {
   const errors: IdentityFieldErrors = {};
@@ -158,6 +172,7 @@ export function normalizeIdentityInput(input: MspIdentityInput): MspIdentityInpu
     address: input.address.trim(),
     ownerName: input.ownerName.trim(),
     email: input.email.trim(),
+    phone: input.phone.trim(),
     website: input.website.trim(),
     venueState: input.venueState.trim(),
     venueCountry: input.venueCountry.trim(),

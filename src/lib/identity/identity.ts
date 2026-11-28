@@ -28,6 +28,7 @@ export function toInput(row: MspIdentity | null): MspIdentityInput {
     address: row?.address ?? "",
     ownerName: row?.ownerName ?? "",
     email: row?.email ?? "",
+    phone: row?.phone ?? "",
     website: row?.website ?? "",
     venueState: row?.venueState ?? "",
     venueCountry: row?.venueCountry ?? "",
@@ -57,6 +58,10 @@ export async function saveIdentity(
     address: next.address || null,
     ownerName: next.ownerName || null,
     email: next.email,
+    // Optional column, like `address`: "" is stored as NULL so an empty
+    // phone is absent rather than an empty string the intro would have to
+    // special-case.
+    phone: next.phone || null,
     website: next.website,
     venueState: next.venueState,
     venueCountry: next.venueCountry,

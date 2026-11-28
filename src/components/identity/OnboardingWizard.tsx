@@ -33,7 +33,7 @@ type Props = {
 
 const STEPS = [
   { title: "Who you are", fields: ["name", "legalName", "ownerName"] as const },
-  { title: "How to reach you", fields: ["address", "email", "website"] as const },
+  { title: "How to reach you", fields: ["address", "email", "phone", "website"] as const },
   { title: "Governing law", fields: ["venueState", "venueCountry"] as const },
   { title: "Preview & confirm", fields: [] as const },
 ];
@@ -44,6 +44,7 @@ const FIELD_HINTS: Partial<Record<keyof MspIdentityInput, string>> = {
   ownerName: "Signs the agreement for the Provider.",
   address: "Street address for the parties and signature blocks.",
   email: "Where this tool sends you alerts (embed down, acceptances…).",
+  phone: "Optional. Fills {{msp_phone}} — the number your public /legal page tells clients to call.",
   website: "Your public site — also where the /legal embed will live.",
   venueState: "State or province your jurisdiction clause names. Yours, not the customer's.",
   venueCountry: "Country for the governing-law line.",
