@@ -27,6 +27,7 @@ import {
   serializeVersionDefaults,
   DOCUMENT_SLUG_RULE,
 } from "./authoringRules";
+import { publicVersionId } from "./publicVersionId";
 
 /** Failures a caller renders to a human or maps to an API error code. */
 export type AuthoringFailure =
@@ -157,6 +158,16 @@ export type MarkPublishedResult = {
  * Idempotent — republishing is a reported no-op. Shared by the publish API
  * route and the operator publish action so "published" means one thing.
  * Sends NOTHING: update notices are a separate, explicit operator decision.
+ *
+ * SHA-4708: this is also where the citable publicId is assigned, in the SAME
+ * update that stamps publishedAt — so there is no window in which a
+ * published row lacks an ID, and the ID's date always matches the timestamp
+ * it was derived from. Both come from one `now`, not two clock reads.
+ *
+ * WRITE-ONCE falls out of the early return above: a version that already has
+ * publishedAt leaves without touching the row, so republishing cannot
+ * recompute an ID. A slug rename later cannot either — nothing recomputes
+ * it, and the unique index would refuse a reused value anyway.
  */
 export async function markPublished(
   doc: Pick<LegalDocument, "slug" | "title">,
@@ -165,9 +176,15 @@ export async function markPublished(
   if (version.publishedAt !== null) {
     return { version, alreadyPublished: true };
   }
+  const now = new Date();
   const published = await prisma.legalDocumentVersion.update({
     where: { id: version.id },
-    data: { publishedAt: new Date() },
+    data: {
+      publishedAt: now,
+      // `?? publicVersionId(...)` and not a plain assignment: a row that
+      // somehow already carries an ID keeps the one it was cited by.
+      publicId: version.publicId ?? publicVersionId(doc.slug, version.version, now),
+    },
   });
   await enqueueWebhookEvent("document.published", {
     document: { slug: doc.slug, title: doc.title, version: published.version },

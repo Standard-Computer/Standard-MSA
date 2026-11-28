@@ -31,6 +31,11 @@ model MspIdentity {
   address    String?
   ownerName  String? // owner / CEO, used as signatory
   email      String? // MSP notification address (liveness alerts etc.)
+  // SHA-4708: backs {{msp_phone}}. Optional, exactly like `address` — an
+  // install that skipped onboarding must keep working, so no public surface
+  // may ever require this. The public /legal intro elides its contact clause
+  // rather than printing a blank or a number we invented.
+  phone      String?
   website    String?
   venue      String? // governing law / venue line, composed from the parts below
   logoUrl    String?
@@ -69,6 +74,20 @@ model LegalDocumentVersion {
   variablesJson String        @default("{}") // defaults for merge variables
   changelog     String?
   publishedAt   DateTime?
+  // SHA-4708: the citable public version ID — "{slug}-v{version}-{YYYYMMDD}",
+  // e.g. "msa-v2-20261101", from the UTC date of publishedAt. Null until
+  // first publish (a draft has no public existence to cite).
+  //
+  // WRITE-ONCE. Assigned in markPublished() inside the same update that
+  // stamps publishedAt, and never recomputed: not on a slug change, not if
+  // publishedAt is edited, not on republish. A customer who accepted
+  // "msa-v2-20261101" must be able to cite that string forever, so the
+  // stored value outranks anything the helper would compute later.
+  //
+  // @unique is what makes reuse impossible rather than merely discouraged.
+  // SQLite treats NULLs as distinct in a unique index, so every unpublished
+  // draft coexists here.
+  publicId      String?       @unique
   createdAt     DateTime      @default(now())
   sends         Send[]
 
