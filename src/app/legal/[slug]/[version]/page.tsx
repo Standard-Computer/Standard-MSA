@@ -48,8 +48,11 @@ export default async function LegalVersionPage({
       <h1 className="mt-2 text-2xl font-bold">{doc.title}</h1>
       <p className="mt-1 text-sm text-slate-500">
         v{ver.version}
-        {ver.publishedAt ? ` · effective ${ver.publishedAt.toISOString().slice(0, 10)}` : ""} · historical
-        version{" · "}
+        {ver.publishedAt ? ` · effective ${ver.publishedAt.toISOString().slice(0, 10)}` : ""}
+        {/* This version's own ID — the one a client who accepted THIS text
+            cites, which is the whole reason old versions stay readable
+            (AC12). */}
+        {ver.publicId ? ` · ID ${ver.publicId}` : ""} · historical version{" · "}
         {/* A reader who accepted this version can keep a copy of THIS
             version, not only of the current one (SHA-4501). */}
         <a href={`/legal/${doc.slug}/${ver.version}/pdf`} className="text-blue-700">

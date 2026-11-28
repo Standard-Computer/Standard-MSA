@@ -12,6 +12,7 @@ const MSP = mspValuesFrom({
   address: "1 Main St, Lincoln NE",
   ownerName: "Sean",
   email: "sean@standardcomputer.com",
+  phone: "555-0100",
   website: "https://standardcomputer.com",
   venue: "Nebraska",
 });
@@ -56,6 +57,9 @@ function makeDoc(id: number, slug: string, title: string, versions: Array<{ v: n
     changelog: null,
     publishedAt: now,
     createdAt: now,
+    // The ID a published row carries (SHA-4708), spelled the way
+    // publicVersionId() spells it for `now` — 2026-11-01 UTC.
+    publicId: `${slug}-v${v}-20261101`,
   }));
   const sorted = [...vs].sort((a, b) => b.version - a.version);
   return {
@@ -137,6 +141,49 @@ test("the frame document: escaped shell, beacon present, docs listed", () => {
     indexHref: data.indexHref,
   });
   assert.match(pinned, /<html lang="en-US" data-sm-embed-theme="dark">/);
+});
+
+test("SHA-4708 §6: the frame prints each version's citable public ID", () => {
+  const data = assembleEmbedData(
+    "https://msa.example.com",
+    [makeDoc(1, "msa", "MSA", [{ v: 1, body: "# v1" }, { v: 2, body: "# v2" }])],
+    SETTINGS,
+    MSP,
+  );
+  assert.equal(data.docs[0].current?.publicId, "msa-v2-20261101");
+  assert.equal(data.docs[0].history[0].publicId, "msa-v1-20261101");
+  const html = embedDocumentHtml({
+    docs: data.docs,
+    introParagraphs: data.introParagraphs,
+    footerLines: data.footerLines,
+    accentColor: data.accentColor,
+    theme: "auto",
+    indexHref: data.indexHref,
+    recordVisits: false,
+  });
+  // The intro tells visitors each agreement shows "a unique version ID", so
+  // the frame must not be the surface that quietly omits it.
+  assert.ok(html.includes("ID msa-v2-20261101"), "the current version's ID");
+  assert.ok(html.includes("ID msa-v1-20261101"), "and each historical one");
+  // A row with no ID yet (pre-backfill) prints no empty "ID " label.
+  const noId = embedDocumentHtml({
+    docs: [
+      {
+        slug: "x",
+        title: "X",
+        body: "<p>b</p>",
+        current: { version: 1, effective: "2026-01-01", publicId: null, anchor: "x-v1", href: "/x" },
+        history: [],
+      },
+    ],
+    introParagraphs: [],
+    footerLines: [],
+    accentColor: "#1d4ed8",
+    theme: "auto",
+    indexHref: "/legal",
+    recordVisits: false,
+  });
+  assert.ok(!noId.includes("ID "), "no dangling label when there is no ID");
 });
 
 test("preview mode emits no beacon", () => {

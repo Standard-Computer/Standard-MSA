@@ -32,6 +32,8 @@ export type MspValues = {
   mspAddress: string | null;
   mspOwnerName: string | null;
   mspEmail: string | null;
+  /** SHA-4708: MspIdentity.phone, backing {{msp_phone}}. */
+  mspPhone: string | null;
   mspWebsite: string | null;
   venue: string | null;
 };
@@ -68,6 +70,14 @@ function mspTokenValue(key: string, msp: MspValues): string | null {
       return msp.mspOwnerName;
     case "msp_email":
       return msp.mspEmail;
+    case "msp_phone":
+      // Plain, exactly like msp_address: the field, or fall through to the
+      // labelled blank. The public intro's "no phone → use the email →
+      // else drop the clause" rule is NOT applied here on purpose, so that
+      // an agreement body asking for a phone number can never quietly
+      // print an email address instead. That rule belongs to the intro and
+      // lives in ./intro.ts (introPhoneValue).
+      return msp.mspPhone;
     case "msp_website":
       return msp.mspWebsite;
     case "venue":

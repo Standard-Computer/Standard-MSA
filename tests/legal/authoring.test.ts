@@ -84,6 +84,7 @@ const FULL_IDENTITY: MspValues = {
   mspAddress: "123 Main St, Lincoln, NE",
   mspOwnerName: "Sean",
   mspEmail: "ops@example.com",
+  mspPhone: "555-0100",
   mspWebsite: "https://example.com",
   venue: "Nebraska",
 };
@@ -94,6 +95,7 @@ const BLANK_IDENTITY: MspValues = {
   mspAddress: null,
   mspOwnerName: null,
   mspEmail: null,
+  mspPhone: null,
   mspWebsite: null,
   venue: null,
 };

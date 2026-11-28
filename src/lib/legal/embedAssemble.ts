@@ -2,6 +2,13 @@ import type { ResolvedLegalSettings } from "./settings";
 import type { PublishedDocument } from "./documents";
 import { renderLegalBody, parseVersionDefaults, type MspValues } from "./variables";
 import { renderEmbedBody, type EmbedDoc } from "./embedDocument";
+import { resolveIntroParagraphs, resolveFooterLines, textLines } from "./intro";
+
+// `textLines` moved to ./intro.ts, which is the module that needs it first
+// (the default intro is split with it). Re-exported from here because this
+// is where call sites and tests already import it from, and one definition
+// beats two that are supposed to match.
+export { textLines };
 
 // The PURE assembly half of the embed data read (SHA-2957) — split from
 // ./embedData.ts so tests can exercise the two rules that matter without a
@@ -35,6 +42,7 @@ export function mspValuesFrom(identity: {
   address: string | null;
   ownerName: string | null;
   email: string | null;
+  phone?: string | null;
   website: string | null;
   venue: string | null;
 } | null): MspValues {
@@ -48,26 +56,32 @@ export function mspValuesFrom(identity: {
     mspAddress: identity?.address ?? null,
     mspOwnerName: identity?.ownerName ?? null,
     mspEmail: identity?.email ?? null,
+    mspPhone: identity?.phone ?? null,
     mspWebsite: identity?.website ?? null,
     venue: identity?.venue ?? null,
   };
 }
 
-/** Free-text intro/footer settings → trimmed, non-empty lines. */
-export function textLines(raw: string | null): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
-
-/** Footer: MSP name + address lines, then the operator's custom lines. */
+/**
+ * Footer: MSP name + address lines, then the operator's custom lines.
+ *
+ * The operator's lines go through the same public-mode substitution as the
+ * intro (GH #33 §3's last paragraph), so a footer written as
+ * "Questions? {{msp_phone}}" resolves instead of publishing its own template
+ * syntax. The prepended name and address lines are already VALUES, not
+ * templates, so they are pushed as-is — running them through the renderer
+ * would only give an operator whose address legitimately contains braces a
+ * surprise.
+ *
+ * Escaping stays where it already is: embedDocumentHtml() escapes every
+ * footer line. Substituting here and escaping there is the same
+ * substitute-then-escape order the intro and the document bodies use.
+ */
 export function buildFooterLines(msp: MspValues, footerText: string | null): string[] {
   const lines: string[] = [];
   if (msp.mspName && msp.mspName !== "the Service Provider") lines.push(msp.mspName);
   if (msp.mspAddress) lines.push(msp.mspAddress);
-  lines.push(...textLines(footerText));
+  lines.push(...resolveFooterLines(footerText, msp));
   return lines;
 }
 
@@ -101,6 +115,11 @@ export function assembleEmbedData(
     current: {
       version: current.version,
       effective: fmt(current.publishedAt),
+      // The citable ID (SHA-4708 §6). The anchor stays the undated
+      // "{slug}-v{version}" it has always been: existing deep links into
+      // the frame must keep working, and publicId is the thing to QUOTE,
+      // not the thing to link to.
+      publicId: current.publicId,
       anchor: `${doc.slug}-v${current.version}`,
       href: `${base}/legal/${doc.slug}`,
     },
@@ -110,6 +129,7 @@ export function assembleEmbedData(
     history: history.map((v) => ({
       version: v.version,
       effective: fmt(v.publishedAt),
+      publicId: v.publicId,
       anchor: `${doc.slug}-v${v.version}`,
       href: `${base}/legal/${doc.slug}/${v.version}`,
     })),
@@ -117,7 +137,9 @@ export function assembleEmbedData(
 
   return {
     docs,
-    introParagraphs: textLines(settings.introText),
+    // The SAME resolver /legal calls (./intro.ts), which is what makes the
+    // two surfaces unable to disagree about the intro (GH #33 §1, AC7).
+    introParagraphs: resolveIntroParagraphs(settings.introText, msp),
     footerLines: buildFooterLines(msp, settings.footerText),
     accentColor: settings.accentColor,
     indexHref: `${base}/legal`,
