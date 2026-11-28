@@ -1,6 +1,9 @@
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/db";
+import { DEFAULT_LEGAL_INTRO, resolveIntroParagraphs } from "@/lib/legal/intro";
+import { mspValuesFrom } from "@/lib/legal/embedAssemble";
 import {
   embedIframeSnippet,
   embedScriptSnippet,
@@ -63,6 +66,9 @@ export default async function EmbedAdminPage() {
 
   const scriptSnippet = embedScriptSnippet({ baseUrl });
   const iframeSnippet = embedIframeSnippet({ baseUrl });
+  // The same resolver the public page and the embed use, so the preview
+  // cannot claim something the visitor will not see.
+  const introPreview = resolveIntroParagraphs(settings.introText, mspValuesFrom(identity));
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-10">
@@ -136,16 +142,38 @@ export default async function EmbedAdminPage() {
           />
         </label>
         <label className="block text-sm">
-          Intro text above the agreements (optional, one paragraph per line)
+          Intro text — shown above the agreements on BOTH your public{" "}
+          <code>/legal</code> page and the website embed (one paragraph per line; blank
+          lines ignored)
           <textarea
             name="introText"
-            rows={2}
-            defaultValue={settings.introText ?? ""}
+            rows={8}
+            // When nothing is saved, the box is PREFILLED with the shipped
+            // default rather than left empty, so the operator can see and
+            // edit exactly what the public page is showing (GH #33 §5).
+            // Saving it back unchanged stores the same text the fallback
+            // would have produced, so the page does not change.
+            defaultValue={settings.introText ?? DEFAULT_LEGAL_INTRO}
             className="mt-1 w-full rounded border border-slate-300 p-2 text-sm"
           />
+          <span className="mt-1 block text-xs text-slate-500">
+            Clear this field and save to restore the default text above. Variables are
+            filled from MSP identity when the page is rendered, so they stay current:{" "}
+            <code>{"{{msp_name}}"}</code>, <code>{"{{msp_legal_name}}"}</code>,{" "}
+            <code>{"{{msp_phone}}"}</code>, <code>{"{{msp_email}}"}</code>,{" "}
+            <code>{"{{msp_address}}"}</code>, <code>{"{{msp_website}}"}</code>,{" "}
+            <code>{"{{msp_owner_name}}"}</code>, <code>{"{{venue}}"}</code> — the same MSP
+            variables you can use in an agreement body. Set these on{" "}
+            <Link href="/settings/identity" className="text-blue-700">
+              MSP identity
+            </Link>
+            . With no phone saved, <code>{"{{msp_phone}}"}</code> falls back to your
+            notification email, and if that is blank too the sentence it sits in ends
+            early rather than showing a gap.
+          </span>
         </label>
         <label className="block text-sm">
-          Footer text (optional, one line per line)
+          Footer text (optional, one line per line) — the same variables work here
           <textarea
             name="footerText"
             rows={2}
@@ -153,6 +181,18 @@ export default async function EmbedAdminPage() {
             className="mt-1 w-full rounded border border-slate-300 p-2 text-sm"
           />
         </label>
+        <section className="rounded border border-slate-200 bg-slate-50 p-3">
+          <h3 className="text-sm font-semibold">Intro preview (as the public page renders it)</h3>
+          <div className="mt-2 space-y-2 text-sm text-slate-700">
+            {introPreview.map((paragraph, i) => (
+              <p key={i}>{paragraph}</p>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Resolved from your saved intro and current MSP identity. Reflects the last save,
+            not what is typed above.
+          </p>
+        </section>
         <label className="block text-sm">
           Visit retention (days) — older visit rows are purged by the scheduled job
           <input

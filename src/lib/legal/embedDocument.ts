@@ -44,6 +44,8 @@ import { VISIT_API_PATH, VISIT_PING_SECONDS } from "../visits/constants";
 export type EmbedVersionLine = {
   version: number;
   effective: string | null;
+  /** The citable public ID — "msa-v2-20261101" (SHA-4708). */
+  publicId: string | null;
   /** Anchor id — "msa-v2". Deep links must survive. */
   anchor: string;
   href: string;
@@ -341,6 +343,11 @@ function embedScript(input: { recordVisits: boolean; docSlugs: string[]; theme: 
 function versionMeta(v: EmbedVersionLine): string {
   const bits = [`<b>v${v.version}</b>`];
   if (v.effective) bits.push(`effective ${escapeHtml(v.effective)}`);
+  // The ID the intro tells visitors to expect ("a unique version ID"), so
+  // the embed cannot promise one and then not show it. Omitted rather than
+  // rendered blank on the rows that have none — a version published before
+  // SHA-4708's backfill ran, which the migration makes a transient state.
+  if (v.publicId) bits.push(`ID ${escapeHtml(v.publicId)}`);
   return bits.join(" · ");
 }
 
